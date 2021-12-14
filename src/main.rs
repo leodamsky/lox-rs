@@ -40,7 +40,7 @@ fn run_prompt() -> Result<(), Box<dyn Error>> {
                 buf.pop();
             }
         }
-        lox::run(buf.drain(..).collect())?;
+        lox::run(buf.drain(..).collect::<String>())?;
         lox::set_had_error(false);
     }
     Ok(())

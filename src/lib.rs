@@ -13,8 +13,8 @@ pub fn set_had_error(value: bool) {
     unsafe { HAD_ERROR = value };
 }
 
-pub fn run(source: String) -> Result<(), Box<dyn Error>> {
-    let scanner = Scanner::new(source);
+pub fn run(source: impl Into<String>) -> Result<(), Box<dyn Error>> {
+    let scanner = Scanner::new(source.into());
     let tokens = scanner.scan_tokens();
 
     for token in tokens {
