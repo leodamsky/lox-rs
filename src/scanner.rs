@@ -7,16 +7,17 @@ use lazy_static::lazy_static;
 use std::collections::HashMap;
 use std::fmt::Debug;
 
-trait Literal: Debug {}
-
-impl Literal for f64 {}
-impl Literal for String {}
+#[derive(Debug)]
+enum Literal {
+    Number(f64),
+    String(String),
+}
 
 #[derive(Debug)]
 pub struct Token {
     kind: TokenType,
     lexeme: String,
-    literal: Option<Box<dyn Literal>>,
+    literal: Option<Literal>,
     line: usize,
 }
 
@@ -222,7 +223,7 @@ impl Scanner {
         let value = self.source[self.start..self.current]
             .parse::<f64>()
             .unwrap();
-        self.add_token(Number, Some(Box::new(value)))
+        self.add_token(Number, Some(Literal::Number(value)))
     }
 
     fn string(&mut self) {
@@ -242,7 +243,7 @@ impl Scanner {
         self.advance();
 
         let value = self.source[(self.start + 1)..(self.current - 1)].to_string();
-        self.add_token(TokenType::String, Some(Box::new(value)));
+        self.add_token(TokenType::String, Some(Literal::String(value)));
     }
 
     fn check_next(&mut self, expected: char) -> bool {
@@ -296,7 +297,7 @@ impl Scanner {
         self.add_token(kind, None);
     }
 
-    fn add_token(&mut self, kind: TokenType, literal: Option<Box<dyn Literal>>) {
+    fn add_token(&mut self, kind: TokenType, literal: Option<Literal>) {
         let text = self.source[self.start..self.current].to_string();
         self.tokens.push(Token {
             kind,
