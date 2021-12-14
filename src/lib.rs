@@ -5,6 +5,7 @@ use crate::scanner::Scanner;
 
 mod ast_printer;
 mod scanner;
+mod reverse_polish;
 
 static mut HAD_ERROR: bool = false;
 
