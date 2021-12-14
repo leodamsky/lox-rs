@@ -1,95 +1,31 @@
-use crate::scanner::TokenType::{
-    Bang, BangEqual, Comma, Dot, Equal, EqualEqual, Greater, GreaterEqual, Identifier, LeftBrace,
-    LeftParen, Less, LessEqual, Minus, Number, Plus, RightBrace, RightParen, Semicolon, Slash,
-    Star, EOF,
+use crate::TokenType::{
+    self, And, Bang, BangEqual, Class, Comma, Dot, Else, Equal, EqualEqual, False, For, Fun,
+    Greater, GreaterEqual, Identifier, If, LeftBrace, LeftParen, Less, LessEqual, Minus, Nil,
+    Number, Or, Plus, Print, Return, RightBrace, RightParen, Semicolon, Slash, Star, Super, This,
+    True, Var, While, EOF,
 };
+use crate::{Literal, Token};
 use lazy_static::lazy_static;
 use std::collections::HashMap;
-use std::fmt::Debug;
-
-#[derive(Debug)]
-enum Literal {
-    Number(f64),
-    String(String),
-}
-
-#[derive(Debug)]
-pub struct Token {
-    kind: TokenType,
-    lexeme: String,
-    literal: Option<Literal>,
-    line: usize,
-}
-
-#[derive(Debug, Copy, Clone)]
-pub enum TokenType {
-    // single-character tokens
-    LeftParen,
-    RightParen,
-    LeftBrace,
-    RightBrace,
-    Comma,
-    Dot,
-    Minus,
-    Plus,
-    Semicolon,
-    Slash,
-    Star,
-
-    // one or two character tokens
-    Bang,
-    BangEqual,
-    Equal,
-    EqualEqual,
-    Greater,
-    GreaterEqual,
-    Less,
-    LessEqual,
-
-    // literals
-    Identifier,
-    String,
-    Number,
-
-    // keywords
-    And,
-    Class,
-    Else,
-    False,
-    Fun,
-    For,
-    If,
-    Nil,
-    Or,
-    Print,
-    Return,
-    Super,
-    This,
-    True,
-    Var,
-    While,
-
-    EOF,
-}
 
 lazy_static! {
     static ref KEYWORDS: HashMap<&'static str, TokenType> = [
-        ("and", TokenType::And),
-        ("class", TokenType::Class),
-        ("else", TokenType::Else),
-        ("false", TokenType::False),
-        ("for", TokenType::For),
-        ("fun", TokenType::Fun),
-        ("if", TokenType::If),
-        ("nil", TokenType::Nil),
-        ("or", TokenType::Or),
-        ("print", TokenType::Print),
-        ("return", TokenType::Return),
-        ("super", TokenType::Super),
-        ("this", TokenType::This),
-        ("true", TokenType::True),
-        ("var", TokenType::Var),
-        ("while", TokenType::While),
+        ("and", And),
+        ("class", Class),
+        ("else", Else),
+        ("false", False),
+        ("for", For),
+        ("fun", Fun),
+        ("if", If),
+        ("nil", Nil),
+        ("or", Or),
+        ("print", Print),
+        ("return", Return),
+        ("super", Super),
+        ("this", This),
+        ("true", True),
+        ("var", Var),
+        ("while", While),
     ]
     .into_iter()
     .collect();
@@ -104,7 +40,7 @@ pub struct Scanner {
 }
 
 impl Scanner {
-    pub fn new(source: String) -> Scanner {
+    pub(crate) fn new(source: String) -> Scanner {
         Scanner {
             source,
             tokens: vec![],
@@ -114,7 +50,7 @@ impl Scanner {
         }
     }
 
-    pub fn scan_tokens(mut self) -> Vec<Token> {
+    pub(crate) fn scan_tokens(mut self) -> Vec<Token> {
         while !self.is_at_end() {
             // we are at the beginning of the next lexeme
             self.start = self.current;
