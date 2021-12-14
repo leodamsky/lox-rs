@@ -179,6 +179,8 @@ impl Scanner {
                     while self.peek() != '\n' && !self.is_at_end() {
                         self.advance();
                     }
+                } else if self.check_next('*') {
+                    self.block();
                 } else {
                     self.add_primitive_token(Slash);
                 }
@@ -192,6 +194,22 @@ impl Scanner {
             'a'..='z' | 'A'..='Z' | '_' => self.identifier(),
             _ => crate::error(self.line, "Unexpected character.".to_string()),
         }
+    }
+
+    fn block(&mut self) {
+        while let Some(c) = self.advance() {
+            match c {
+                '*' => {
+                    if self.peek() == '/' {
+                        self.advance();
+                        return;
+                    }
+                }
+                '\n' => self.line += 1,
+                _ => {}
+            }
+        }
+        crate::error(self.line, "Unterminated block comment.".to_string());
     }
 
     fn identifier(&mut self) {
