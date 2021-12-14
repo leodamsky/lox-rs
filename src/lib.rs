@@ -29,7 +29,7 @@ fn error(line: usize, message: String) {
 }
 
 fn report(line: usize, place: impl AsRef<str>, message: impl AsRef<str>) {
-    println!(
+    eprintln!(
         "[line {}] Error{}: {}",
         line,
         place.as_ref(),
