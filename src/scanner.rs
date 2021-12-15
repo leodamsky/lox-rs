@@ -1,4 +1,4 @@
-use crate::TokenType::{
+use crate::TokenKind::{
     self, And, Bang, BangEqual, Class, Comma, Dot, Else, Equal, EqualEqual, False, For, Fun,
     Greater, GreaterEqual, Identifier, If, LeftBrace, LeftParen, Less, LessEqual, Minus, Nil,
     Number, Or, Plus, Print, Return, RightBrace, RightParen, Semicolon, Slash, Star, Super, This,
@@ -9,7 +9,7 @@ use lazy_static::lazy_static;
 use std::collections::HashMap;
 
 lazy_static! {
-    static ref KEYWORDS: HashMap<&'static str, TokenType> = [
+    static ref KEYWORDS: HashMap<&'static str, TokenKind> = [
         ("and", And),
         ("class", Class),
         ("else", Else),
@@ -80,39 +80,39 @@ impl Scanner {
             ';' => self.add_primitive_token(Semicolon),
             '*' => self.add_primitive_token(Star),
             '!' => {
-                let token_type = if self.check_next('=') {
+                let token_kind = if self.consume_next('=') {
                     BangEqual
                 } else {
                     Bang
                 };
-                self.add_primitive_token(token_type);
+                self.add_primitive_token(token_kind);
             }
             '=' => {
-                let token_type = if self.check_next('=') {
+                let token_kind = if self.consume_next('=') {
                     EqualEqual
                 } else {
                     Equal
                 };
-                self.add_primitive_token(token_type)
+                self.add_primitive_token(token_kind)
             }
             '<' => {
-                let token_type = if self.check_next('=') {
+                let token_kind = if self.consume_next('=') {
                     LessEqual
                 } else {
                     Less
                 };
-                self.add_primitive_token(token_type)
+                self.add_primitive_token(token_kind)
             }
             '>' => {
-                let token_type = if self.check_next('=') {
+                let token_kind = if self.consume_next('=') {
                     GreaterEqual
                 } else {
                     Greater
                 };
-                self.add_primitive_token(token_type)
+                self.add_primitive_token(token_kind)
             }
             '/' => {
-                if self.check_next('/') {
+                if self.consume_next('/') {
                     while self.peek() != '\n' && !self.is_at_end() {
                         self.advance();
                     }
@@ -127,7 +127,7 @@ impl Scanner {
             '"' => self.string(),
             '0'..='9' => self.number(),
             'a'..='z' | 'A'..='Z' | '_' => self.identifier(),
-            _ => crate::error(self.line, "Unexpected character.".to_string()),
+            _ => crate::scan_error(self.line, "Unexpected character.".to_string()),
         }
     }
 
@@ -137,8 +137,8 @@ impl Scanner {
         }
 
         let text = &self.source[self.start..self.current];
-        let token_type = KEYWORDS.get(text).copied().unwrap_or(Identifier);
-        self.add_primitive_token(token_type);
+        let token_kind = KEYWORDS.get(text).copied().unwrap_or(Identifier);
+        self.add_primitive_token(token_kind);
     }
 
     fn number(&mut self) {
@@ -171,7 +171,7 @@ impl Scanner {
         }
 
         if self.is_at_end() {
-            crate::error(self.line, "Unterminated string.".to_string());
+            crate::scan_error(self.line, "Unterminated string.".to_string());
             return;
         }
 
@@ -179,10 +179,10 @@ impl Scanner {
         self.advance();
 
         let value = self.source[(self.start + 1)..(self.current - 1)].to_string();
-        self.add_token(TokenType::String, Some(Literal::String(value)));
+        self.add_token(TokenKind::String, Some(Literal::String(value)));
     }
 
-    fn check_next(&mut self, expected: char) -> bool {
+    fn consume_next(&mut self, expected: char) -> bool {
         let candidate = self.source.chars().nth(self.current);
         match candidate {
             None => false,
@@ -229,11 +229,11 @@ impl Scanner {
         c
     }
 
-    fn add_primitive_token(&mut self, kind: TokenType) {
+    fn add_primitive_token(&mut self, kind: TokenKind) {
         self.add_token(kind, None);
     }
 
-    fn add_token(&mut self, kind: TokenType, literal: Option<Literal>) {
+    fn add_token(&mut self, kind: TokenKind, literal: Option<Literal>) {
         let text = self.source[self.start..self.current].to_string();
         self.tokens.push(Token {
             kind,

@@ -1,10 +1,13 @@
 use std::error::Error;
 use std::fmt::{Debug, Display, Formatter};
 
+use crate::parser::Parser;
 use crate::scanner::Scanner;
+use crate::TokenKind::EOF;
 
 mod ast_printer;
 mod scanner;
+mod parser;
 
 static mut HAD_ERROR: bool = false;
 
@@ -19,16 +22,30 @@ pub fn set_had_error(value: bool) {
 pub fn run(source: impl Into<String>) -> Result<(), Box<dyn Error>> {
     let scanner = Scanner::new(source.into());
     let tokens = scanner.scan_tokens();
+    let parser = Parser::new(tokens);
+    let expression = parser.parse();
 
-    for token in tokens {
-        println!("{:?}", token);
+    if let Some(expression) = expression {
+        println!("{}", ast_printer::print_ast(&expression));
+    } else {
+        // stop if there was a syntax error.
+        assert!(had_error());
+        return Ok(());
     }
 
     Ok(())
 }
 
-fn error(line: usize, message: String) {
+fn scan_error(line: usize, message: impl AsRef<str>) {
     report(line, "", message);
+}
+
+fn syntax_error(token: &Token, message: impl AsRef<str>) {
+    if token.kind == EOF {
+        report(token.line, " at end", message);
+    } else {
+        report(token.line, format!(" at '{}'", &token.lexeme), message)
+    }
 }
 
 fn report(line: usize, place: impl AsRef<str>, message: impl AsRef<str>) {
@@ -51,7 +68,7 @@ pub(crate) enum Expr {
         right: Box<Expr>,
     },
     Grouping(Box<Expr>),
-    Literal(Option<Literal>),
+    Literal(Literal),
     Unary {
         operator: Token,
         right: Box<Expr>,
@@ -62,6 +79,8 @@ pub(crate) enum Expr {
 pub(crate) enum Literal {
     Number(f64),
     String(String),
+    Boolean(bool),
+    Nil,
 }
 
 impl Display for Literal {
@@ -69,20 +88,22 @@ impl Display for Literal {
         match self {
             Literal::Number(value) => Display::fmt(value, f),
             Literal::String(value) => Display::fmt(value, f),
+            Literal::Boolean(value) => Display::fmt(value, f),
+            Literal::Nil => write!(f, "nil"),
         }
     }
 }
 
 #[derive(Debug)]
 pub(crate) struct Token {
-    kind: TokenType,
+    kind: TokenKind,
     lexeme: String,
     literal: Option<Literal>,
     line: usize,
 }
 
-#[derive(Debug, Copy, Clone)]
-pub(crate) enum TokenType {
+#[derive(Debug, Copy, Clone, Eq, PartialEq)]
+pub(crate) enum TokenKind {
     // single-character tokens
     LeftParen,
     RightParen,
