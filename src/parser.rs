@@ -25,12 +25,31 @@ impl Parser {
     }
 
     pub(crate) fn parse(mut self) -> Option<Expr> {
-        self.expression()
-            .ok()
+        self.expression().ok()
     }
 
     fn expression(&mut self) -> Result<Expr, ParseError> {
-        self.equality()
+        self.ternary()
+    }
+
+    fn ternary(&mut self) -> Result<Expr, ParseError> {
+        let mut expr = self.equality()?;
+
+        if let Some(q_operator) = self.try_consume(&TokenKind::Question) {
+            let mid = self.ternary()?;
+            let c_operator =
+                self.consume(&TokenKind::Colon, "Expect ':' in a ternary expression.")?;
+            let right = self.ternary()?;
+            expr = Expr::Ternary {
+                left: expr.into(),
+                left_operator: q_operator,
+                mid: mid.into(),
+                right_operator: c_operator,
+                right: right.into(),
+            }
+        }
+
+        Ok(expr)
     }
 
     fn equality(&mut self) -> Result<Expr, ParseError> {

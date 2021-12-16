@@ -2,6 +2,20 @@ use crate::Expr;
 
 pub(crate) fn print_ast(expr: &Expr) -> String {
     match expr {
+        Expr::Ternary {
+            left,
+            left_operator,
+            mid,
+            right_operator,
+            right,
+        } => parenthesize(format!(
+            "{}{} {} {} {}",
+            left_operator.lexeme,
+            right_operator.lexeme,
+            print_ast(left),
+            print_ast(mid),
+            print_ast(right),
+        )),
         Expr::Binary {
             left,
             operator,

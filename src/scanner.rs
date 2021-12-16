@@ -1,12 +1,14 @@
-use crate::TokenKind::{
-    self, And, Bang, BangEqual, Class, Comma, Dot, Else, Equal, EqualEqual, False, For, Fun,
-    Greater, GreaterEqual, Identifier, If, LeftBrace, LeftParen, Less, LessEqual, Minus, Nil,
-    Number, Or, Plus, Print, Return, RightBrace, RightParen, Semicolon, Slash, Star, Super, This,
-    True, Var, While, EOF,
-};
-use crate::{Literal, Token};
-use lazy_static::lazy_static;
 use std::collections::HashMap;
+
+use lazy_static::lazy_static;
+
+use crate::{Literal, Token};
+use crate::TokenKind::{
+    self, And, Bang, BangEqual, Class, Colon, Comma, Dot, Else, EOF, Equal, EqualEqual, False, For,
+    Fun, Greater, GreaterEqual, Identifier, If, LeftBrace, LeftParen, Less, LessEqual, Minus,
+    Nil, Number, Or, Plus, Print, Question, Return, RightBrace, RightParen, Semicolon, Slash,
+    Star, Super, This, True, Var, While,
+};
 
 lazy_static! {
     static ref KEYWORDS: HashMap<&'static str, TokenKind> = [
@@ -79,6 +81,8 @@ impl Scanner {
             '+' => self.add_primitive_token(Plus),
             ';' => self.add_primitive_token(Semicolon),
             '*' => self.add_primitive_token(Star),
+            '?' => self.add_primitive_token(Question),
+            ':' => self.add_primitive_token(Colon),
             '!' => {
                 let token_kind = if self.consume_next('=') {
                     BangEqual

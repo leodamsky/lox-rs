@@ -62,6 +62,13 @@ fn report(line: usize, place: impl AsRef<str>, message: impl AsRef<str>) {
 
 #[derive(Debug)]
 pub(crate) enum Expr {
+    Ternary {
+        left: Box<Expr>,
+        left_operator: Token,
+        mid: Box<Expr>,
+        right_operator: Token,
+        right: Box<Expr>,
+    },
     Binary {
         left: Box<Expr>,
         operator: Token,
@@ -116,6 +123,8 @@ pub(crate) enum TokenKind {
     Semicolon,
     Slash,
     Star,
+    Question,
+    Colon,
 
     // one or two character tokens
     Bang,
