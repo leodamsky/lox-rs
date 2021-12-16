@@ -2,14 +2,14 @@ use std::iter::Peekable;
 use std::vec::IntoIter;
 
 use TokenKind::{
-    Bang, BangEqual, Class, EOF, EqualEqual, False, For, Fun, Greater, GreaterEqual, If,
-    LeftParen, Less, LessEqual, Minus, Nil, Number, Plus, Print, Return, Semicolon, Slash, Star, True,
-    Var, While,
+    Bang, BangEqual, Class, EqualEqual, False, For, Fun, Greater, GreaterEqual, If, LeftParen,
+    Less, LessEqual, Minus, Nil, Number, Plus, Print, Return, Semicolon, Slash, Star, True, Var,
+    While, EOF,
 };
 
-use crate::{Expr, Literal, Token, TokenKind};
 use crate::parser::util::error;
 use crate::TokenKind::RightParen;
+use crate::{Expr, Literal, Token, TokenKind};
 
 struct ParseError {}
 
@@ -25,8 +25,7 @@ impl Parser {
     }
 
     pub(crate) fn parse(mut self) -> Option<Expr> {
-        self.expression()
-            .ok()
+        self.expression().ok()
     }
 
     fn expression(&mut self) -> Result<Expr, ParseError> {

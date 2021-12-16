@@ -6,8 +6,8 @@ use crate::scanner::Scanner;
 use crate::TokenKind::EOF;
 
 mod ast_printer;
-mod scanner;
 mod parser;
+mod scanner;
 
 static mut HAD_ERROR: bool = false;
 
