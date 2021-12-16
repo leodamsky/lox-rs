@@ -2,14 +2,13 @@ use std::iter::Peekable;
 use std::vec::IntoIter;
 
 use TokenKind::{
-    Bang, BangEqual, Class, EOF, EqualEqual, False, For, Fun, Greater, GreaterEqual, If,
-    LeftParen, Less, LessEqual, Minus, Nil, Number, Plus, Print, Return, Semicolon, Slash, Star, True,
-    Var, While,
+    And, Bang, BangEqual, Class, EOF, Equal, EqualEqual, False, For, Fun, Greater, GreaterEqual,
+    If, LeftParen, Less, LessEqual, Minus, Nil, Number, Or, Plus, Print, Return, RightParen,
+    Semicolon, Slash, Star, True, Var, While,
 };
 
 use crate::{Expr, Literal, Token, TokenKind};
 use crate::parser::util::error;
-use crate::TokenKind::RightParen;
 
 struct ParseError {}
 
@@ -25,8 +24,7 @@ impl Parser {
     }
 
     pub(crate) fn parse(mut self) -> Option<Expr> {
-        self.expression()
-            .ok()
+        self.expression().ok()
     }
 
     fn expression(&mut self) -> Result<Expr, ParseError> {
@@ -56,6 +54,30 @@ impl Parser {
                 operator,
                 right: right.into(),
             })
+        // error production
+        // I know this is dirty and unsafe but doing it cleanly requires a ton of work
+        // Java's Enum.values() requires a separate crate
+        // https://stackoverflow.com/questions/21371534/in-rust-is-there-a-way-to-iterate-through-the-values-of-an-enum
+        } else if let Some(operator) = self.try_consume_any(&[
+            Plus,
+            Slash,
+            Star,
+            BangEqual,
+            Equal,
+            EqualEqual,
+            Greater,
+            GreaterEqual,
+            Less,
+            LessEqual,
+            And,
+            Or,
+        ]) {
+            // consume the right operand
+            self.unary()?;
+            Err(error(
+                &operator,
+                format!("Unsupported unary operator '{}'", operator.lexeme),
+            ))
         } else {
             self.primary()
         }
