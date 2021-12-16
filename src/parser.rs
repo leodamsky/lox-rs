@@ -9,7 +9,7 @@ use TokenKind::{
 
 use crate::{Expr, Literal, Token, TokenKind};
 use crate::parser::util::error;
-use crate::TokenKind::RightParen;
+use crate::TokenKind::{Comma, RightParen};
 
 struct ParseError {}
 
@@ -30,7 +30,11 @@ impl Parser {
     }
 
     fn expression(&mut self) -> Result<Expr, ParseError> {
-        self.equality()
+        self.comma()
+    }
+
+    fn comma(&mut self) -> Result<Expr, ParseError> {
+        self.parse_left_associative(&[Comma], Parser::equality)
     }
 
     fn equality(&mut self) -> Result<Expr, ParseError> {
