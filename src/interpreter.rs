@@ -58,7 +58,15 @@ pub(crate) fn interpret(expr: Expr) -> Result<Value, RuntimeError> {
                     _ => return require_number_operands(operator),
                 },
                 TokenKind::Slash => match (left, right) {
-                    (Value::Number(left), Value::Number(right)) => Value::Number(left / right),
+                    (Value::Number(left), Value::Number(right)) => {
+                        if right == 0.0 {
+                            return Err(RuntimeError {
+                                message: "Division by zero".to_string(),
+                                token: operator,
+                            });
+                        }
+                        Value::Number(left / right)
+                    }
                     _ => return require_number_operands(operator),
                 },
                 TokenKind::Star => match (left, right) {
