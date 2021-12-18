@@ -67,7 +67,8 @@ pub(crate) fn interpret(expr: Expr) -> Result<Value, RuntimeError> {
                 },
                 TokenKind::Plus => match (left, right) {
                     (Value::Number(left), Value::Number(right)) => Value::Number(left + right),
-                    (Value::String(left), Value::String(right)) => Value::String(left + &right),
+                    (Value::String(left), right) => Value::String(left + &right.to_string()),
+                    (left, Value::String(right)) => Value::String(format!("{}{}", left, right)),
                     _ => {
                         return Err(RuntimeError {
                             token: operator,
