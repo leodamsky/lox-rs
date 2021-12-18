@@ -1,18 +1,25 @@
+use crate::interpreter::RuntimeError;
 use std::error::Error;
-use std::fmt::{Debug, Display, Formatter};
+use std::fmt::{Display, Formatter};
 
 use crate::parser::Parser;
 use crate::scanner::Scanner;
 use crate::TokenKind::EOF;
 
 mod ast_printer;
+mod interpreter;
 mod parser;
 mod scanner;
 
 static mut HAD_ERROR: bool = false;
+static mut HAD_RUNTIME_ERROR: bool = false;
 
 pub fn had_error() -> bool {
     unsafe { HAD_ERROR }
+}
+
+pub fn had_runtime_error() -> bool {
+    unsafe { HAD_RUNTIME_ERROR }
 }
 
 pub fn set_had_error(value: bool) {
@@ -25,12 +32,14 @@ pub fn run(source: impl Into<String>) -> Result<(), Box<dyn Error>> {
     let parser = Parser::new(tokens);
     let expression = parser.parse();
 
-    if let Some(expression) = expression {
-        println!("{}", ast_printer::print_ast(&expression));
-    } else {
-        // stop if there was a syntax error.
-        assert!(had_error());
+    // stop if there was a syntax error.
+    if had_error() {
         return Ok(());
+    }
+
+    match interpreter::interpret(expression.expect("Expression expect when there is no error.")) {
+        Ok(result) => println!("{}", result),
+        Err(e) => runtime_error(e),
     }
 
     Ok(())
@@ -46,6 +55,11 @@ fn syntax_error(token: &Token, message: impl AsRef<str>) {
     } else {
         report(token.line, format!(" at '{}'", &token.lexeme), message)
     }
+}
+
+fn runtime_error(RuntimeError { message, token }: RuntimeError) {
+    eprintln!("{}\n[line {}]", message, token.line);
+    unsafe { HAD_RUNTIME_ERROR = true };
 }
 
 fn report(line: usize, place: impl AsRef<str>, message: impl AsRef<str>) {

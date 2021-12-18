@@ -20,6 +20,9 @@ fn run_file(path: String) -> Result<(), Box<dyn Error>> {
     if lox::had_error() {
         process::exit(65);
     }
+    if lox::had_runtime_error() {
+        process::exit(70);
+    }
     Ok(())
 }
 
