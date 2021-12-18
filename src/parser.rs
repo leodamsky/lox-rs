@@ -9,9 +9,9 @@ use TokenKind::{
 
 use crate::parser::util::error;
 use crate::TokenKind::RightParen;
-use crate::{Expr, Literal, Token, TokenKind};
+use crate::{Expr, Literal, Stmt, Token, TokenKind};
 
-struct ParseError {}
+pub(crate) struct ParseError {}
 
 pub(crate) struct Parser {
     tokens: Peekable<IntoIter<Token>>,
@@ -24,8 +24,32 @@ impl Parser {
         }
     }
 
-    pub(crate) fn parse(mut self) -> Option<Expr> {
-        self.expression().ok()
+    pub(crate) fn parse(mut self) -> Result<Vec<Stmt>, ParseError> {
+        let mut statements = vec![];
+        while self.peek().is_some() {
+            statements.push(self.statement()?);
+        }
+        Ok(statements)
+    }
+
+    fn statement(&mut self) -> Result<Stmt, ParseError> {
+        if self.try_consume(&Print).is_some() {
+            self.print_statement()
+        } else {
+            self.expression_statement()
+        }
+    }
+
+    fn print_statement(&mut self) -> Result<Stmt, ParseError> {
+        let value = self.expression()?;
+        self.consume(&Semicolon, "Expect ';' after expression.")?;
+        Ok(Stmt::Print(value))
+    }
+
+    fn expression_statement(&mut self) -> Result<Stmt, ParseError> {
+        let value = self.expression()?;
+        self.consume(&Semicolon, "Expect ';' after expression.")?;
+        Ok(Stmt::Expression(value))
     }
 
     fn expression(&mut self) -> Result<Expr, ParseError> {

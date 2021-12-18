@@ -1,4 +1,4 @@
-use crate::{Expr, Literal, Token, TokenKind};
+use crate::{Expr, Literal, Stmt, Token, TokenKind};
 use std::fmt::{Display, Formatter};
 
 pub(crate) enum Value {
@@ -42,89 +42,120 @@ pub(crate) struct RuntimeError {
     pub(crate) token: Token,
 }
 
-pub(crate) fn interpret(expr: Expr) -> Result<Value, RuntimeError> {
-    let expr = match expr {
-        Expr::Binary {
-            left,
-            operator,
-            right,
-        } => {
-            let left = interpret(*left)?;
-            let right = interpret(*right)?;
+pub(crate) trait Interpreter {
+    type Output;
 
-            match operator.kind {
-                TokenKind::Minus => match (left, right) {
-                    (Value::Number(left), Value::Number(right)) => Value::Number(left - right),
-                    _ => return require_number_operands(operator),
-                },
-                TokenKind::Slash => match (left, right) {
-                    (Value::Number(left), Value::Number(right)) => Value::Number(left / right),
-                    _ => return require_number_operands(operator),
-                },
-                TokenKind::Star => match (left, right) {
-                    (Value::Number(left), Value::Number(right)) => Value::Number(left * right),
-                    _ => return require_number_operands(operator),
-                },
-                TokenKind::Plus => match (left, right) {
-                    (Value::Number(left), Value::Number(right)) => Value::Number(left + right),
-                    (Value::String(left), Value::String(right)) => Value::String(left + &right),
+    fn interpret(self) -> Result<Self::Output, RuntimeError>;
+}
+
+impl Interpreter for Stmt {
+    type Output = ();
+
+    fn interpret(self) -> Result<Self::Output, RuntimeError> {
+        match self {
+            Stmt::Expression(expr) => {
+                expr.interpret()?;
+            },
+            Stmt::Print(expr) => {
+                let value = expr.interpret()?;
+                println!("{}", value);
+            }
+        }
+        Ok(())
+    }
+}
+
+impl Interpreter for Expr {
+    type Output = Value;
+
+    fn interpret(self) -> Result<Self::Output, RuntimeError> {
+        let expr = match self {
+            Expr::Binary {
+                left,
+                operator,
+                right,
+            } => {
+                let left = left.interpret()?;
+                let right = right.interpret()?;
+
+                match operator.kind {
+                    TokenKind::Minus => match (left, right) {
+                        (Value::Number(left), Value::Number(right)) => Value::Number(left - right),
+                        _ => return require_number_operands(operator),
+                    },
+                    TokenKind::Slash => match (left, right) {
+                        (Value::Number(left), Value::Number(right)) => Value::Number(left / right),
+                        _ => return require_number_operands(operator),
+                    },
+                    TokenKind::Star => match (left, right) {
+                        (Value::Number(left), Value::Number(right)) => Value::Number(left * right),
+                        _ => return require_number_operands(operator),
+                    },
+                    TokenKind::Plus => match (left, right) {
+                        (Value::Number(left), Value::Number(right)) => Value::Number(left + right),
+                        (Value::String(left), Value::String(right)) => Value::String(left + &right),
+                        _ => {
+                            return Err(RuntimeError {
+                                token: operator,
+                                message: "Operands must be two numbers or two string.".to_string(),
+                            })
+                        }
+                    },
+                    TokenKind::GreaterEqual => match (left, right) {
+                        (Value::Number(left), Value::Number(right)) => {
+                            Value::Boolean(left >= right)
+                        }
+                        _ => return require_number_operands(operator),
+                    },
+                    TokenKind::Greater => match (left, right) {
+                        (Value::Number(left), Value::Number(right)) => Value::Boolean(left > right),
+                        _ => return require_number_operands(operator),
+                    },
+                    TokenKind::Less => match (left, right) {
+                        (Value::Number(left), Value::Number(right)) => Value::Boolean(left < right),
+                        _ => return require_number_operands(operator),
+                    },
+                    TokenKind::LessEqual => match (left, right) {
+                        (Value::Number(left), Value::Number(right)) => {
+                            Value::Boolean(left <= right)
+                        }
+                        _ => return require_number_operands(operator),
+                    },
+                    TokenKind::BangEqual => Value::Boolean(!is_equal(left, right)),
+                    TokenKind::EqualEqual => Value::Boolean(is_equal(left, right)),
                     _ => {
                         return Err(RuntimeError {
+                            message: format!("Not supported binary operator: {}", operator.lexeme),
                             token: operator,
-                            message: "Operands must be two numbers or two string.".to_string(),
                         })
                     }
-                },
-                TokenKind::GreaterEqual => match (left, right) {
-                    (Value::Number(left), Value::Number(right)) => Value::Boolean(left >= right),
-                    _ => return require_number_operands(operator),
-                },
-                TokenKind::Greater => match (left, right) {
-                    (Value::Number(left), Value::Number(right)) => Value::Boolean(left > right),
-                    _ => return require_number_operands(operator),
-                },
-                TokenKind::Less => match (left, right) {
-                    (Value::Number(left), Value::Number(right)) => Value::Boolean(left < right),
-                    _ => return require_number_operands(operator),
-                },
-                TokenKind::LessEqual => match (left, right) {
-                    (Value::Number(left), Value::Number(right)) => Value::Boolean(left <= right),
-                    _ => return require_number_operands(operator),
-                },
-                TokenKind::BangEqual => Value::Boolean(!is_equal(left, right)),
-                TokenKind::EqualEqual => Value::Boolean(is_equal(left, right)),
-                _ => {
-                    return Err(RuntimeError {
-                        message: format!("Not supported binary operator: {}", operator.lexeme),
-                        token: operator,
-                    })
                 }
             }
-        }
-        Expr::Grouping(expr) => interpret(*expr)?,
-        Expr::Literal(literal) => literal.into(),
-        Expr::Unary { operator, right } => {
-            let right = interpret(*right)?;
+            Expr::Grouping(expr) => expr.interpret()?,
+            Expr::Literal(literal) => literal.into(),
+            Expr::Unary { operator, right } => {
+                let right = right.interpret()?;
 
-            match operator.kind {
-                TokenKind::Bang => Value::Boolean(!is_truthy(right)),
-                TokenKind::Minus => {
-                    if let Value::Number(number) = right {
-                        Value::Number(-number)
-                    } else {
-                        return require_number_operand(operator);
+                match operator.kind {
+                    TokenKind::Bang => Value::Boolean(!is_truthy(right)),
+                    TokenKind::Minus => {
+                        if let Value::Number(number) = right {
+                            Value::Number(-number)
+                        } else {
+                            return require_number_operand(operator);
+                        }
+                    }
+                    _ => {
+                        return Err(RuntimeError {
+                            message: format!("Unsupported unary operator: {}", operator.lexeme),
+                            token: operator,
+                        })
                     }
                 }
-                _ => {
-                    return Err(RuntimeError {
-                        message: format!("Unsupported unary operator: {}", operator.lexeme),
-                        token: operator,
-                    })
-                }
             }
-        }
-    };
-    Ok(expr)
+        };
+        Ok(expr)
+    }
 }
 
 fn is_truthy(value: Value) -> bool {

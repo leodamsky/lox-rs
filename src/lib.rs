@@ -1,4 +1,4 @@
-use crate::interpreter::RuntimeError;
+use crate::interpreter::{Interpreter, RuntimeError};
 use std::error::Error;
 use std::fmt::{Display, Formatter};
 
@@ -30,16 +30,18 @@ pub fn run(source: impl Into<String>) -> Result<(), Box<dyn Error>> {
     let scanner = Scanner::new(source.into());
     let tokens = scanner.scan_tokens();
     let parser = Parser::new(tokens);
-    let expression = parser.parse();
+    let statements = parser.parse();
 
     // stop if there was a syntax error.
     if had_error() {
         return Ok(());
     }
 
-    match interpreter::interpret(expression.expect("Expression expect when there is no error.")) {
-        Ok(result) => println!("{}", result),
-        Err(e) => runtime_error(e),
+    for statement in statements.ok().unwrap() {
+        if let Err(e) = statement.interpret() {
+            runtime_error(e);
+            break;
+        }
     }
 
     Ok(())
@@ -72,6 +74,12 @@ fn report(line: usize, place: impl AsRef<str>, message: impl AsRef<str>) {
     unsafe {
         HAD_ERROR = true;
     }
+}
+
+#[derive(Debug)]
+pub(crate) enum Stmt {
+    Expression(Expr),
+    Print(Expr),
 }
 
 #[derive(Debug)]
