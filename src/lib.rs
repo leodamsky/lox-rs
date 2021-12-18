@@ -6,7 +6,6 @@ use crate::parser::Parser;
 use crate::scanner::Scanner;
 use crate::TokenKind::EOF;
 
-mod ast_printer;
 mod interpreter;
 mod parser;
 mod scanner;
