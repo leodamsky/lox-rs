@@ -36,11 +36,11 @@ pub fn run(source: impl Into<String>) -> Result<(), Box<dyn Error>> {
         return Ok(());
     }
 
-    for statement in statements.ok().unwrap() {
-        if let Err(e) = statement.interpret() {
-            runtime_error(e);
-            break;
-        }
+    let statements = statements.expect("Expected statements cause had no error.");
+    let interpreter = Interpreter::new(statements);
+
+    if let Err(e) = interpreter.interpret() {
+        runtime_error(e);
     }
 
     Ok(())
@@ -79,6 +79,10 @@ fn report(line: usize, place: impl AsRef<str>, message: impl AsRef<str>) {
 pub(crate) enum Stmt {
     Expression(Expr),
     Print(Expr),
+    Var {
+        name: Token,
+        initializer: Option<Expr>,
+    },
 }
 
 #[derive(Debug)]
@@ -93,6 +97,9 @@ pub(crate) enum Expr {
     Unary {
         operator: Token,
         right: Box<Expr>,
+    },
+    Variable {
+        name: Token,
     },
 }
 

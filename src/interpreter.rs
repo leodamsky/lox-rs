@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use crate::{Expr, Literal, Stmt, Token, TokenKind};
 use std::fmt::{Display, Formatter};
 
@@ -42,41 +43,90 @@ pub(crate) struct RuntimeError {
     pub(crate) token: Token,
 }
 
-pub(crate) trait Interpreter {
-    type Output;
-
-    fn interpret(self) -> Result<Self::Output, RuntimeError>;
+pub(crate) struct Interpreter {
+    statements: Vec<Stmt>,
+    environment: Environment,
 }
 
-impl Interpreter for Stmt {
+impl Interpreter {
+    pub(crate) fn new(statements: Vec<Stmt>) -> Interpreter {
+        Interpreter {
+            statements,
+            environment: Environment::default(),
+        }
+    }
+
+    pub(crate) fn interpret(mut self) -> Result<(), RuntimeError> {
+        for statement in self.statements {
+            statement.interpret(&mut self.environment)?;
+        }
+        Ok(())
+    }
+}
+
+#[derive(Default)]
+struct Environment {
+    values: HashMap<String, Value>
+}
+
+impl Environment {
+    fn define(&mut self, name: impl Into<String>, value: Value) {
+        self.values.insert(name.into(), value);
+    }
+
+    fn get(&mut self, name: Token) -> Result<&Value, RuntimeError> {
+        self.values.get(&name.lexeme)
+            .ok_or_else(|| RuntimeError {
+                message: format!("Undefined variable '{}'.", name.lexeme),
+                token: name,
+            })
+    }
+}
+
+trait Interpret {
+    type Output;
+
+    fn interpret(self, env: &mut Environment) -> Result<Self::Output, RuntimeError>;
+}
+
+impl Interpret for Stmt {
     type Output = ();
 
-    fn interpret(self) -> Result<Self::Output, RuntimeError> {
+    fn interpret(self, env: &mut Environment) -> Result<Self::Output, RuntimeError> {
         match self {
             Stmt::Expression(expr) => {
-                expr.interpret()?;
+                expr.interpret(env)?;
             },
             Stmt::Print(expr) => {
-                let value = expr.interpret()?;
+                let value = expr.interpret(env)?;
                 println!("{}", value);
+            }
+            Stmt::Var { name, initializer } => {
+                let value = if let Some(initializer) = initializer {
+                    initializer.interpret(env)?
+                } else {
+                    Value::Nil
+                };
+
+                env.define(name.lexeme, value)
             }
         }
         Ok(())
     }
 }
 
-impl Interpreter for Expr {
+impl Interpret for Expr {
     type Output = Value;
 
-    fn interpret(self) -> Result<Self::Output, RuntimeError> {
+    fn interpret(self, env: &mut Environment) -> Result<Self::Output, RuntimeError> {
         let expr = match self {
             Expr::Binary {
                 left,
                 operator,
                 right,
             } => {
-                let left = left.interpret()?;
-                let right = right.interpret()?;
+                let left = left.interpret(env)?;
+                let right = right.interpret(env)?;
 
                 match operator.kind {
                     TokenKind::Minus => match (left, right) {
@@ -131,10 +181,10 @@ impl Interpreter for Expr {
                     }
                 }
             }
-            Expr::Grouping(expr) => expr.interpret()?,
+            Expr::Grouping(expr) => expr.interpret(env)?,
             Expr::Literal(literal) => literal.into(),
             Expr::Unary { operator, right } => {
-                let right = right.interpret()?;
+                let right = right.interpret(env)?;
 
                 match operator.kind {
                     TokenKind::Bang => Value::Boolean(!is_truthy(right)),
@@ -152,6 +202,9 @@ impl Interpreter for Expr {
                         })
                     }
                 }
+            }
+            Expr::Variable { name } => {
+                todo!()
             }
         };
         Ok(expr)

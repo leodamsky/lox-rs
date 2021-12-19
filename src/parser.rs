@@ -8,9 +8,10 @@ use TokenKind::{
 };
 
 use crate::parser::util::error;
-use crate::TokenKind::RightParen;
+use crate::TokenKind::{Equal, Identifier, RightParen};
 use crate::{Expr, Literal, Stmt, Token, TokenKind};
 
+#[derive(Debug)]
 pub(crate) struct ParseError {}
 
 pub(crate) struct Parser {
@@ -24,12 +25,47 @@ impl Parser {
         }
     }
 
-    pub(crate) fn parse(mut self) -> Result<Vec<Stmt>, ParseError> {
+    pub(crate) fn parse(mut self) -> Result<Vec<Stmt>, Vec<ParseError>> {
         let mut statements = vec![];
+        let mut errors = vec![];
         while self.peek().is_some() {
-            statements.push(self.statement()?);
+            match self.declaration() {
+                Ok(stmt) => statements.push(stmt),
+                Err(e) => errors.push(e),
+            }
         }
-        Ok(statements)
+        if errors.is_empty() {
+            Ok(statements)
+        } else {
+            Err(errors)
+        }
+    }
+
+    fn declaration(&mut self) -> Result<Stmt, ParseError> {
+        let result = if self.try_consume(&Var).is_some() {
+            self.var_declaration()
+        } else {
+            self.statement()
+        };
+
+        if result.is_err() {
+            self.synchronize();
+        }
+
+        result
+    }
+
+    fn var_declaration(&mut self) -> Result<Stmt, ParseError> {
+        let name = self.consume(&Identifier, "Expect variable name.")?;
+
+        let initializer = if let Some(_) = self.try_consume(&Equal) {
+            Some(self.expression()?)
+        } else {
+            None
+        };
+
+        self.consume(&Semicolon, "Expect ';' after variable declaration.")?;
+        Ok(Stmt::Var { name, initializer })
     }
 
     fn statement(&mut self) -> Result<Stmt, ParseError> {
@@ -104,6 +140,7 @@ impl Parser {
                 self.consume(&RightParen, "Expect ')' after expression.")?;
                 Expr::Grouping(expr.into())
             }
+            Identifier => Expr::Variable { name: candidate },
             _ => return Err(error(&candidate, "Expect expression.")),
         };
 
