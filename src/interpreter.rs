@@ -1,12 +1,18 @@
+use std::cell::RefCell;
 use std::collections::HashMap;
-use crate::{Expr, Literal, Stmt, Token, TokenKind};
 use std::fmt::{Display, Formatter};
+use std::rc::Rc;
 
+use crate::{Expr, Literal, Stmt, Token, TokenKind};
+
+#[derive(Debug)]
 pub(crate) enum Value {
     Number(f64),
     String(String),
     Boolean(bool),
     Nil,
+    // so, Lox is single-threaded
+    Ref(Rc<RefCell<Value>>),
 }
 
 impl Display for Value {
@@ -23,6 +29,7 @@ impl Display for Value {
             Value::String(s) => Display::fmt(s, f),
             Value::Boolean(b) => Display::fmt(b, f),
             Value::Nil => write!(f, "nil"),
+            Value::Ref(value) => Display::fmt(&value.borrow(), f),
         }
     }
 }
@@ -43,21 +50,14 @@ pub(crate) struct RuntimeError {
     pub(crate) token: Token,
 }
 
+#[derive(Default)]
 pub(crate) struct Interpreter {
-    statements: Vec<Stmt>,
     environment: Environment,
 }
 
 impl Interpreter {
-    pub(crate) fn new(statements: Vec<Stmt>) -> Interpreter {
-        Interpreter {
-            statements,
-            environment: Environment::default(),
-        }
-    }
-
-    pub(crate) fn interpret(mut self) -> Result<(), RuntimeError> {
-        for statement in self.statements {
+    pub(crate) fn interpret(&mut self, statements: Vec<Stmt>) -> Result<(), RuntimeError> {
+        for statement in statements {
             statement.interpret(&mut self.environment)?;
         }
         Ok(())
@@ -66,20 +66,23 @@ impl Interpreter {
 
 #[derive(Default)]
 struct Environment {
-    values: HashMap<String, Value>
+    values: HashMap<String, Rc<RefCell<Value>>>
 }
 
 impl Environment {
     fn define(&mut self, name: impl Into<String>, value: Value) {
-        self.values.insert(name.into(), value);
+        self.values.insert(name.into(), Rc::new(RefCell::new(value)));
+        println!("{:?}", self.values);
     }
 
-    fn get(&mut self, name: Token) -> Result<&Value, RuntimeError> {
-        self.values.get(&name.lexeme)
-            .ok_or_else(|| RuntimeError {
+    fn get(&mut self, name: Token) -> Result<Value, RuntimeError> {
+        match dbg!(self.values.get(dbg!(&name.lexeme))) {
+            Some(value) => Ok(Value::Ref(Rc::clone(value))),
+            None => Err(RuntimeError {
                 message: format!("Undefined variable '{}'.", name.lexeme),
                 token: name,
             })
+        }
     }
 }
 
@@ -203,9 +206,7 @@ impl Interpret for Expr {
                     }
                 }
             }
-            Expr::Variable { name } => {
-                todo!()
-            }
+            Expr::Variable { name } => env.get(name)?,
         };
         Ok(expr)
     }

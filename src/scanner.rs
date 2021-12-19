@@ -4,7 +4,7 @@ use crate::TokenKind::{
     Number, Or, Plus, Print, Return, RightBrace, RightParen, Semicolon, Slash, Star, Super, This,
     True, Var, While, EOF,
 };
-use crate::{Literal, Token};
+use crate::{Literal, Lox, Token};
 use lazy_static::lazy_static;
 use std::collections::HashMap;
 
@@ -31,22 +31,24 @@ lazy_static! {
     .collect();
 }
 
-pub struct Scanner {
+pub struct Scanner<'a> {
     source: String,
     tokens: Vec<Token>,
     start: usize,
     current: usize,
     line: usize,
+    lox: &'a mut Lox,
 }
 
-impl Scanner {
-    pub(crate) fn new(source: String) -> Scanner {
+impl<'a> Scanner<'a> {
+    pub(crate) fn new(source: String, lox: &mut Lox) -> Scanner {
         Scanner {
             source,
             tokens: vec![],
             start: 0,
             current: 0,
             line: 1,
+            lox
         }
     }
 
@@ -127,7 +129,7 @@ impl Scanner {
             '"' => self.string(),
             '0'..='9' => self.number(),
             'a'..='z' | 'A'..='Z' | '_' => self.identifier(),
-            _ => crate::scan_error(self.line, "Unexpected character.".to_string()),
+            _ => self.lox.scan_error(self.line, "Unexpected character.".to_string()),
         }
     }
 
@@ -171,7 +173,7 @@ impl Scanner {
         }
 
         if self.is_at_end() {
-            crate::scan_error(self.line, "Unterminated string.".to_string());
+            self.lox.scan_error(self.line, "Unterminated string.".to_string());
             return;
         }
 

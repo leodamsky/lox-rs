@@ -10,68 +10,75 @@ mod interpreter;
 mod parser;
 mod scanner;
 
-static mut HAD_ERROR: bool = false;
-static mut HAD_RUNTIME_ERROR: bool = false;
-
-pub fn had_error() -> bool {
-    unsafe { HAD_ERROR }
+pub struct Lox {
+    had_error: bool,
+    had_runtime_error: bool,
+    interpreter: Interpreter,
 }
 
-pub fn had_runtime_error() -> bool {
-    unsafe { HAD_RUNTIME_ERROR }
-}
-
-pub fn set_had_error(value: bool) {
-    unsafe { HAD_ERROR = value };
-}
-
-pub fn run(source: impl Into<String>) -> Result<(), Box<dyn Error>> {
-    let scanner = Scanner::new(source.into());
-    let tokens = scanner.scan_tokens();
-    let parser = Parser::new(tokens);
-    let statements = parser.parse();
-
-    // stop if there was a syntax error.
-    if had_error() {
-        return Ok(());
+impl Lox {
+    pub fn new() -> Lox {
+        Lox {
+            had_error: false,
+            had_runtime_error: false,
+            interpreter: Interpreter::default(),
+        }
     }
 
-    let statements = statements.expect("Expected statements cause had no error.");
-    let interpreter = Interpreter::new(statements);
+    pub fn run(&mut self, source: impl Into<String>) -> Result<(), Box<dyn Error>> {
+        let tokens = Scanner::new(source.into(), self).scan_tokens();
+        let statements = Parser::new(tokens, self).parse();
 
-    if let Err(e) = interpreter.interpret() {
-        runtime_error(e);
+        // stop if there was a syntax error.
+        if self.had_error() {
+            return Ok(());
+        }
+
+        let statements = statements.expect("Expected statements cause had no error.");
+        if let Err(e) = self.interpreter.interpret(statements) {
+            self.runtime_error(e);
+        }
+
+        Ok(())
     }
 
-    Ok(())
-}
-
-fn scan_error(line: usize, message: impl AsRef<str>) {
-    report(line, "", message);
-}
-
-fn syntax_error(token: &Token, message: impl AsRef<str>) {
-    if token.kind == EOF {
-        report(token.line, " at end", message);
-    } else {
-        report(token.line, format!(" at '{}'", &token.lexeme), message)
+    pub fn had_error(&self) -> bool {
+        self.had_error
     }
-}
 
-fn runtime_error(RuntimeError { message, token }: RuntimeError) {
-    eprintln!("{}\n[line {}]", message, token.line);
-    unsafe { HAD_RUNTIME_ERROR = true };
-}
+    pub fn had_runtime_error(&self) -> bool {
+        self.had_runtime_error
+    }
 
-fn report(line: usize, place: impl AsRef<str>, message: impl AsRef<str>) {
-    eprintln!(
-        "[line {}] Error{}: {}",
-        line,
-        place.as_ref(),
-        message.as_ref()
-    );
-    unsafe {
-        HAD_ERROR = true;
+    pub fn set_had_error(&mut self, value: bool) {
+        self.had_error = value;
+    }
+
+    pub(crate) fn scan_error(&mut self, line: usize, message: impl AsRef<str>) {
+        self.report(line, "", message);
+    }
+
+    pub(crate) fn syntax_error(&mut self, token: &Token, message: impl AsRef<str>) {
+        if token.kind == EOF {
+            self.report(token.line, " at end", message);
+        } else {
+            self.report(token.line, format!(" at '{}'", &token.lexeme), message)
+        }
+    }
+
+    pub(crate) fn runtime_error(&mut self, RuntimeError { message, token }: RuntimeError) {
+        eprintln!("{}\n[line {}]", message, token.line);
+        self.had_runtime_error = true;
+    }
+
+    fn report(&mut self, line: usize, place: impl AsRef<str>, message: impl AsRef<str>) {
+        eprintln!(
+            "[line {}] Error{}: {}",
+            line,
+            place.as_ref(),
+            message.as_ref()
+        );
+        self.had_error = true;
     }
 }
 

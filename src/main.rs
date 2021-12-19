@@ -1,6 +1,7 @@
 use std::error::Error;
 use std::io::Write;
 use std::{env, fs, io, process};
+use lox::Lox;
 
 fn main() -> Result<(), Box<dyn Error>> {
     let args = env::args().collect::<Vec<_>>();
@@ -16,17 +17,19 @@ fn main() -> Result<(), Box<dyn Error>> {
 
 fn run_file(path: String) -> Result<(), Box<dyn Error>> {
     let source_code = fs::read_to_string(path)?;
-    lox::run(source_code)?;
-    if lox::had_error() {
+    let mut lox = Lox::new();
+    lox.run(source_code)?;
+    if lox.had_error() {
         process::exit(65);
     }
-    if lox::had_runtime_error() {
+    if lox.had_runtime_error() {
         process::exit(70);
     }
     Ok(())
 }
 
 fn run_prompt() -> Result<(), Box<dyn Error>> {
+    let mut lox = Lox::new();
     let stdin = io::stdin();
     let mut buf = String::new();
     loop {
@@ -43,8 +46,8 @@ fn run_prompt() -> Result<(), Box<dyn Error>> {
                 buf.pop();
             }
         }
-        lox::run(buf.drain(..).collect::<String>())?;
-        lox::set_had_error(false);
+        lox.run(buf.drain(..).collect::<String>())?;
+        lox.set_had_error(false);
     }
     Ok(())
 }

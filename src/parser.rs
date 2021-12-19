@@ -7,21 +7,22 @@ use TokenKind::{
     While, EOF,
 };
 
-use crate::parser::util::error;
 use crate::TokenKind::{Equal, Identifier, RightParen};
-use crate::{Expr, Literal, Stmt, Token, TokenKind};
+use crate::{Expr, Literal, Lox, Stmt, Token, TokenKind};
 
 #[derive(Debug)]
 pub(crate) struct ParseError {}
 
-pub(crate) struct Parser {
+pub(crate) struct Parser<'a> {
     tokens: Peekable<IntoIter<Token>>,
+    lox: &'a mut Lox,
 }
 
-impl Parser {
-    pub(crate) fn new(tokens: Vec<Token>) -> Parser {
+impl<'a> Parser<'a> {
+    pub(crate) fn new(tokens: Vec<Token>, lox: &mut Lox) -> Parser {
         Parser {
             tokens: tokens.into_iter().peekable(),
+            lox,
         }
     }
 
@@ -123,7 +124,11 @@ impl Parser {
     fn primary(&mut self) -> Result<Expr, ParseError> {
         let candidate = self
             .advance()
-            .ok_or_else(|| error(self.force_peek(), "Expect expression, got end of input."))?;
+            .ok_or_else(|| {
+                let token = self.tokens.peek().unwrap();
+                self.lox.syntax_error(token, "Expect expression, got end of input.");
+                ParseError {}
+            })?;
 
         let expr = match candidate.kind {
             False => Expr::Literal(Literal::Boolean(false)),
@@ -141,7 +146,7 @@ impl Parser {
                 Expr::Grouping(expr.into())
             }
             Identifier => Expr::Variable { name: candidate },
-            _ => return Err(error(&candidate, "Expect expression.")),
+            _ => return Err(self.error(&candidate, "Expect expression.")),
         };
 
         Ok(expr)
@@ -153,7 +158,7 @@ impl Parser {
         mut handle: T,
     ) -> Result<Expr, ParseError>
     where
-        T: FnMut(&mut Parser) -> Result<Expr, ParseError>,
+        T: for<'r> FnMut(&'r mut Parser<'a>) -> Result<Expr, ParseError>,
     {
         let mut expr = handle(self)?;
         while let Some(operator) = self.try_consume_any(kinds) {
@@ -189,7 +194,9 @@ impl Parser {
         if let Some(token) = self.try_consume(kind) {
             Ok(token)
         } else {
-            Err(util::error(self.force_peek(), message))
+            let token = self.tokens.peek().unwrap();
+            self.lox.syntax_error(token, message);
+            Err(ParseError {})
         }
     }
 
@@ -220,14 +227,9 @@ impl Parser {
             }
         }
     }
-}
 
-mod util {
-    use crate::parser::ParseError;
-    use crate::Token;
-
-    pub(super) fn error(token: &Token, message: impl AsRef<str>) -> ParseError {
-        crate::syntax_error(token, message);
+    fn error(&mut self, token: &Token, message: impl AsRef<str>) -> ParseError {
+        self.lox.syntax_error(token, message);
         ParseError {}
     }
 }
