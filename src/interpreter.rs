@@ -11,8 +11,6 @@ pub(crate) enum Value {
     String(String),
     Boolean(bool),
     Nil,
-    // so, Lox is single-threaded
-    Ref(Rc<RefCell<Value>>),
 }
 
 impl Display for Value {
@@ -29,7 +27,6 @@ impl Display for Value {
             Value::String(s) => Display::fmt(s, f),
             Value::Boolean(b) => Display::fmt(b, f),
             Value::Nil => write!(f, "nil"),
-            Value::Ref(value) => Display::fmt(&value.borrow(), f),
         }
     }
 }
@@ -42,6 +39,12 @@ impl From<Literal> for Value {
             Literal::Boolean(b) => Value::Boolean(b),
             Literal::Nil => Value::Nil,
         }
+    }
+}
+
+impl From<Value> for Rc<RefCell<Value>> {
+    fn from(value: Value) -> Self {
+        Rc::new(RefCell::new(value))
     }
 }
 
@@ -66,22 +69,21 @@ impl Interpreter {
 
 #[derive(Default)]
 struct Environment {
-    values: HashMap<String, Rc<RefCell<Value>>>
+    values: HashMap<String, Rc<RefCell<Value>>>,
 }
 
 impl Environment {
-    fn define(&mut self, name: impl Into<String>, value: Value) {
-        self.values.insert(name.into(), Rc::new(RefCell::new(value)));
-        println!("{:?}", self.values);
+    fn define(&mut self, name: impl Into<String>, value: Rc<RefCell<Value>>) {
+        self.values.insert(name.into(), value);
     }
 
-    fn get(&mut self, name: Token) -> Result<Value, RuntimeError> {
-        match dbg!(self.values.get(dbg!(&name.lexeme))) {
-            Some(value) => Ok(Value::Ref(Rc::clone(value))),
+    fn get(&mut self, name: Token) -> Result<Rc<RefCell<Value>>, RuntimeError> {
+        match self.values.get(&name.lexeme) {
+            Some(value) => Ok(Rc::clone(value)),
             None => Err(RuntimeError {
                 message: format!("Undefined variable '{}'.", name.lexeme),
                 token: name,
-            })
+            }),
         }
     }
 }
@@ -99,16 +101,16 @@ impl Interpret for Stmt {
         match self {
             Stmt::Expression(expr) => {
                 expr.interpret(env)?;
-            },
+            }
             Stmt::Print(expr) => {
                 let value = expr.interpret(env)?;
-                println!("{}", value);
+                println!("{}", RefCell::borrow(&value));
             }
             Stmt::Var { name, initializer } => {
                 let value = if let Some(initializer) = initializer {
                     initializer.interpret(env)?
                 } else {
-                    Value::Nil
+                    Value::Nil.into()
                 };
 
                 env.define(name.lexeme, value)
@@ -119,10 +121,10 @@ impl Interpret for Stmt {
 }
 
 impl Interpret for Expr {
-    type Output = Value;
+    type Output = Rc<RefCell<Value>>;
 
     fn interpret(self, env: &mut Environment) -> Result<Self::Output, RuntimeError> {
-        let expr = match self {
+        let expr: Rc<RefCell<Value>> = match self {
             Expr::Binary {
                 left,
                 operator,
@@ -132,50 +134,87 @@ impl Interpret for Expr {
                 let right = right.interpret(env)?;
 
                 match operator.kind {
-                    TokenKind::Minus => match (left, right) {
-                        (Value::Number(left), Value::Number(right)) => Value::Number(left - right),
-                        _ => return require_number_operands(operator),
-                    },
-                    TokenKind::Slash => match (left, right) {
-                        (Value::Number(left), Value::Number(right)) => Value::Number(left / right),
-                        _ => return require_number_operands(operator),
-                    },
-                    TokenKind::Star => match (left, right) {
-                        (Value::Number(left), Value::Number(right)) => Value::Number(left * right),
-                        _ => return require_number_operands(operator),
-                    },
-                    TokenKind::Plus => match (left, right) {
-                        (Value::Number(left), Value::Number(right)) => Value::Number(left + right),
-                        (Value::String(left), Value::String(right)) => Value::String(left + &right),
-                        _ => {
-                            return Err(RuntimeError {
-                                token: operator,
-                                message: "Operands must be two numbers or two string.".to_string(),
-                            })
-                        }
-                    },
-                    TokenKind::GreaterEqual => match (left, right) {
+                    TokenKind::Minus => match (&*RefCell::borrow(&left), &*RefCell::borrow(&right))
+                    {
                         (Value::Number(left), Value::Number(right)) => {
-                            Value::Boolean(left >= right)
+                            Value::Number(left - right).into()
                         }
                         _ => return require_number_operands(operator),
                     },
-                    TokenKind::Greater => match (left, right) {
-                        (Value::Number(left), Value::Number(right)) => Value::Boolean(left > right),
-                        _ => return require_number_operands(operator),
-                    },
-                    TokenKind::Less => match (left, right) {
-                        (Value::Number(left), Value::Number(right)) => Value::Boolean(left < right),
-                        _ => return require_number_operands(operator),
-                    },
-                    TokenKind::LessEqual => match (left, right) {
+                    TokenKind::Slash => match (&*RefCell::borrow(&left), &*RefCell::borrow(&right))
+                    {
                         (Value::Number(left), Value::Number(right)) => {
-                            Value::Boolean(left <= right)
+                            Value::Number(left / right).into()
                         }
                         _ => return require_number_operands(operator),
                     },
-                    TokenKind::BangEqual => Value::Boolean(!is_equal(left, right)),
-                    TokenKind::EqualEqual => Value::Boolean(is_equal(left, right)),
+                    TokenKind::Star => {
+                        match (&*RefCell::borrow(&left), &*RefCell::borrow(&right)) {
+                            (Value::Number(left), Value::Number(right)) => {
+                                Value::Number(left * right).into()
+                            }
+                            _ => return require_number_operands(operator),
+                        }
+                    }
+                    TokenKind::Plus => {
+                        match (&*RefCell::borrow(&left), &*RefCell::borrow(&right)) {
+                            (Value::Number(left), Value::Number(right)) => {
+                                Value::Number(left + right).into()
+                            }
+                            (Value::String(left), Value::String(right)) => {
+                                Value::String(format!("{}{}", left, right)).into()
+                            }
+                            _ => {
+                                return Err(RuntimeError {
+                                    token: operator,
+                                    message: "Operands must be two numbers or two string."
+                                        .to_string(),
+                                })
+                            }
+                        }
+                    }
+                    TokenKind::GreaterEqual => {
+                        match (&*RefCell::borrow(&left), &*RefCell::borrow(&right)) {
+                            (Value::Number(left), Value::Number(right)) => {
+                                Value::Boolean(left >= right).into()
+                            }
+                            _ => return require_number_operands(operator),
+                        }
+                    }
+                    TokenKind::Greater => {
+                        match (&*RefCell::borrow(&left), &*RefCell::borrow(&right)) {
+                            (Value::Number(left), Value::Number(right)) => {
+                                Value::Boolean(left > right).into()
+                            }
+                            _ => return require_number_operands(operator),
+                        }
+                    }
+                    TokenKind::Less => {
+                        match (&*RefCell::borrow(&left), &*RefCell::borrow(&right)) {
+                            (Value::Number(left), Value::Number(right)) => {
+                                Value::Boolean(left < right).into()
+                            }
+                            _ => return require_number_operands(operator),
+                        }
+                    }
+                    TokenKind::LessEqual => {
+                        match (&*RefCell::borrow(&left), &*RefCell::borrow(&right)) {
+                            (Value::Number(left), Value::Number(right)) => {
+                                Value::Boolean(left <= right).into()
+                            }
+                            _ => return require_number_operands(operator),
+                        }
+                    }
+                    TokenKind::BangEqual => Value::Boolean(!is_equal(
+                        &*RefCell::borrow(&left),
+                        &*RefCell::borrow(&right),
+                    ))
+                    .into(),
+                    TokenKind::EqualEqual => Value::Boolean(is_equal(
+                        &*RefCell::borrow(&left),
+                        &*RefCell::borrow(&right),
+                    ))
+                    .into(),
                     _ => {
                         return Err(RuntimeError {
                             message: format!("Not supported binary operator: {}", operator.lexeme),
@@ -185,15 +224,15 @@ impl Interpret for Expr {
                 }
             }
             Expr::Grouping(expr) => expr.interpret(env)?,
-            Expr::Literal(literal) => literal.into(),
+            Expr::Literal(literal) => Value::from(literal).into(),
             Expr::Unary { operator, right } => {
                 let right = right.interpret(env)?;
 
                 match operator.kind {
-                    TokenKind::Bang => Value::Boolean(!is_truthy(right)),
+                    TokenKind::Bang => Value::Boolean(!is_truthy(&*RefCell::borrow(&right))).into(),
                     TokenKind::Minus => {
-                        if let Value::Number(number) = right {
-                            Value::Number(-number)
+                        if let Value::Number(number) = &*RefCell::borrow(&right) {
+                            Value::Number(-*number).into()
                         } else {
                             return require_number_operand(operator);
                         }
@@ -212,15 +251,15 @@ impl Interpret for Expr {
     }
 }
 
-fn is_truthy(value: Value) -> bool {
+fn is_truthy(value: &Value) -> bool {
     match value {
-        Value::Boolean(b) => b,
+        Value::Boolean(b) => *b,
         Value::Nil => false,
         _ => true,
     }
 }
 
-fn is_equal(left: Value, right: Value) -> bool {
+fn is_equal(left: &Value, right: &Value) -> bool {
     match (left, right) {
         (Value::Nil, Value::Nil) => true,
         (Value::Number(left), Value::Number(right)) => left == right,
