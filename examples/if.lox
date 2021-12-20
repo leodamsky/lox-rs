@@ -1,0 +1,5 @@
+if (2 + 2 == 4) {
+    print "all good";
+} else {
+    print 1984;
+}

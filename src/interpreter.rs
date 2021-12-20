@@ -138,6 +138,17 @@ impl Interpret<()> for Stmt {
             Stmt::Expression(expr) => {
                 expr.interpret(env)?;
             }
+            Stmt::If {
+                condition,
+                then_branch,
+                else_branch,
+            } => {
+                if is_truthy(&condition.interpret(Rc::clone(&env))?.borrow()) {
+                    then_branch.interpret(env)?
+                } else if let Some(else_branch) = else_branch {
+                    else_branch.interpret(env)?
+                }
+            }
             Stmt::Print(expr) => {
                 let value = expr.interpret(env)?;
                 println!("{}", value.borrow());

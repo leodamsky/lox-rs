@@ -11,10 +11,14 @@ declaration -> varDecl
              | statement ;
 
 statement -> exprStmt
+           | ifStmt
            | printStmt
            | block ;
 
 exprStmt -> expression ";" ;
+
+ifStmt -> "if" "(" expression ")" statement
+          ( "else" statement )? ;
 
 printStmt -> "print" expression ";" ;
 

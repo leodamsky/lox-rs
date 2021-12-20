@@ -7,7 +7,7 @@ use TokenKind::{
     While, EOF,
 };
 
-use crate::TokenKind::{Equal, Identifier, LeftBrace, RightBrace, RightParen};
+use crate::TokenKind::{Else, Equal, Identifier, LeftBrace, RightBrace, RightParen};
 use crate::{Expr, Literal, Lox, Stmt, Token, TokenKind};
 
 #[derive(Debug)]
@@ -70,13 +70,34 @@ impl<'a> Parser<'a> {
     }
 
     fn statement(&mut self) -> Result<Stmt, ParseError> {
-        if self.try_consume(&Print).is_some() {
+        if self.try_consume(&If).is_some() {
+            self.if_statement()
+        } else if self.try_consume(&Print).is_some() {
             self.print_statement()
         } else if self.try_consume(&LeftBrace).is_some() {
             Ok(Stmt::Block(self.block()?))
         } else {
             self.expression_statement()
         }
+    }
+
+    fn if_statement(&mut self) -> Result<Stmt, ParseError> {
+        self.consume(&LeftParen, "Expect '(' after 'if'.")?;
+        let condition = self.expression()?;
+        self.consume(&RightParen, "Exprct ')' after if condition.")?;
+
+        let then_branch = self.statement()?.into();
+        let else_branch = if self.try_consume(&Else).is_some() {
+            Some(Box::new(self.statement()?))
+        } else {
+            None
+        };
+
+        Ok(Stmt::If {
+            condition,
+            then_branch,
+            else_branch,
+        })
     }
 
     fn print_statement(&mut self) -> Result<Stmt, ParseError> {

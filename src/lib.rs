@@ -83,6 +83,11 @@ impl Lox {
 pub(crate) enum Stmt {
     Block(Vec<Stmt>),
     Expression(Expr),
+    If {
+        condition: Expr,
+        then_branch: Box<Stmt>,
+        else_branch: Option<Box<Stmt>>,
+    },
     Print(Expr),
     Var {
         name: Token,
