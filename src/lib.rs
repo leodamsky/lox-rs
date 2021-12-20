@@ -94,6 +94,10 @@ pub(crate) enum Stmt {
 
 #[derive(Debug)]
 pub(crate) enum Expr {
+    Assign {
+        name: Token,
+        value: Box<Expr>,
+    },
     Binary {
         left: Box<Expr>,
         operator: Token,

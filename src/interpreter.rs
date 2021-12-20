@@ -86,18 +86,26 @@ impl Environment {
             }),
         }
     }
+
+    fn assign(&mut self, name: Token, value: Rc<RefCell<Value>>) -> Result<(), RuntimeError> {
+        if self.values.contains_key(&name.lexeme) {
+            self.values.insert(name.lexeme, value);
+            Ok(())
+        } else {
+            Err(RuntimeError {
+                message: format!("Undefined variable '{}'.", &name.lexeme),
+                token: name,
+            })
+        }
+    }
 }
 
-trait Interpret {
-    type Output;
-
-    fn interpret(self, env: &mut Environment) -> Result<Self::Output, RuntimeError>;
+trait Interpret<T> {
+    fn interpret(self, env: &mut Environment) -> Result<T, RuntimeError>;
 }
 
-impl Interpret for Stmt {
-    type Output = ();
-
-    fn interpret(self, env: &mut Environment) -> Result<Self::Output, RuntimeError> {
+impl Interpret<()> for Stmt {
+    fn interpret(self, env: &mut Environment) -> Result<(), RuntimeError> {
         match self {
             Stmt::Expression(expr) => {
                 expr.interpret(env)?;
@@ -120,11 +128,14 @@ impl Interpret for Stmt {
     }
 }
 
-impl Interpret for Expr {
-    type Output = Rc<RefCell<Value>>;
-
-    fn interpret(self, env: &mut Environment) -> Result<Self::Output, RuntimeError> {
+impl Interpret<Rc<RefCell<Value>>> for Expr {
+    fn interpret(self, env: &mut Environment) -> Result<Rc<RefCell<Value>>, RuntimeError> {
         let expr: Rc<RefCell<Value>> = match self {
+            Expr::Assign { name, value} => {
+                let value = value.interpret(env)?;
+                env.assign(name, Rc::clone(&value))?;
+                value
+            }
             Expr::Binary {
                 left,
                 operator,

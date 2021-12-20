@@ -90,7 +90,26 @@ impl<'a> Parser<'a> {
     }
 
     fn expression(&mut self) -> Result<Expr, ParseError> {
-        self.equality()
+        self.assignment()
+    }
+
+    fn assignment(&mut self) -> Result<Expr, ParseError> {
+        let expr = self.equality()?;
+
+        if let Some(equals) = self.try_consume(&Equal) {
+            let value = self.assignment()?;
+
+            if let Expr::Variable { name } = expr {
+                return Ok(Expr::Assign {
+                    name,
+                    value: value.into(),
+                });
+            }
+
+            self.error(&equals, "Invalid assignment target.");
+        }
+
+        Ok(expr)
     }
 
     fn equality(&mut self) -> Result<Expr, ParseError> {
@@ -122,13 +141,12 @@ impl<'a> Parser<'a> {
     }
 
     fn primary(&mut self) -> Result<Expr, ParseError> {
-        let candidate = self
-            .advance()
-            .ok_or_else(|| {
-                let token = self.tokens.peek().unwrap();
-                self.lox.syntax_error(token, "Expect expression, got end of input.");
-                ParseError {}
-            })?;
+        let candidate = self.advance().ok_or_else(|| {
+            let token = self.tokens.peek().unwrap();
+            self.lox
+                .syntax_error(token, "Expect expression, got end of input.");
+            ParseError {}
+        })?;
 
         let expr = match candidate.kind {
             False => Expr::Literal(Literal::Boolean(false)),
