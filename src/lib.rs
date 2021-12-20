@@ -24,6 +24,37 @@ impl Lox {
         }
     }
 
+    pub fn try_run_expr(&mut self, source: impl Into<String>) -> Option<String> {
+        let tokens = Scanner::new(source.into(), self).scan_tokens();
+        let statements = Parser::new(tokens, self).parse();
+
+        // stop if there was a syntax error.
+        if self.had_error() {
+            return None;
+        }
+
+        let mut statements = statements.expect("Expected statements cause had no error.");
+
+        let result = if statements.len() == 1 && statements.first().unwrap().is_expression() {
+            match statements.pop().unwrap() {
+                Stmt::Expression(expr) => self
+                    .interpreter
+                    .interpret_expr(expr)
+                    .map(|value| Some(value.borrow().to_string())),
+                _ => unreachable!(),
+            }
+        } else {
+            self.interpreter.interpret(statements).map(|_| None)
+        };
+
+        if let Err(e) = result {
+            self.runtime_error(e);
+            None
+        } else {
+            result.ok().unwrap()
+        }
+    }
+
     pub fn run(&mut self, source: impl Into<String>) {
         let tokens = Scanner::new(source.into(), self).scan_tokens();
         let statements = Parser::new(tokens, self).parse();
@@ -88,6 +119,15 @@ pub(crate) enum Stmt {
         name: Token,
         initializer: Option<Expr>,
     },
+}
+
+impl Stmt {
+    fn is_expression(&self) -> bool {
+        match self {
+            Stmt::Expression(_) => true,
+            _ => false,
+        }
+    }
 }
 
 #[derive(Debug)]

@@ -59,6 +59,13 @@ pub(crate) struct Interpreter {
 }
 
 impl Interpreter {
+    pub(crate) fn interpret_expr(
+        &mut self,
+        expr: Expr,
+    ) -> Result<Rc<RefCell<Value>>, RuntimeError> {
+        expr.interpret(Rc::clone(&self.environment))
+    }
+
     pub(crate) fn interpret(&mut self, statements: Vec<Stmt>) -> Result<(), RuntimeError> {
         for statement in statements {
             statement.interpret(Rc::clone(&self.environment))?;

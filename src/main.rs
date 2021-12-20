@@ -46,7 +46,9 @@ fn run_prompt() -> Result<(), Box<dyn Error>> {
                 buf.pop();
             }
         }
-        lox.run(buf.drain(..).collect::<String>());
+        if let Some(output) = lox.try_run_expr(buf.drain(..).collect::<String>()) {
+            println!("{}", output);
+        }
         lox.set_had_error(false);
     }
     Ok(())
