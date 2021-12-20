@@ -140,7 +140,7 @@ impl Interpret<()> for Stmt {
             }
             Stmt::Print(expr) => {
                 let value = expr.interpret(env)?;
-                println!("{}", RefCell::borrow(&value));
+                println!("{}", value.borrow());
             }
             Stmt::Var { name, initializer } => {
                 let value = if let Some(initializer) = initializer {
@@ -173,14 +173,14 @@ impl Interpret<Rc<RefCell<Value>>> for Expr {
                 let right = right.interpret(env)?;
 
                 match operator.kind {
-                    TokenKind::Minus => match (&*RefCell::borrow(&left), &*RefCell::borrow(&right))
+                    TokenKind::Minus => match (&*left.borrow(), &*right.borrow())
                     {
                         (Value::Number(left), Value::Number(right)) => {
                             Value::Number(left - right).into()
                         }
                         _ => return require_number_operands(operator),
                     },
-                    TokenKind::Slash => match (&*RefCell::borrow(&left), &*RefCell::borrow(&right))
+                    TokenKind::Slash => match (&*left.borrow(), &*right.borrow())
                     {
                         (Value::Number(left), Value::Number(right)) => {
                             Value::Number(left / right).into()
@@ -188,7 +188,7 @@ impl Interpret<Rc<RefCell<Value>>> for Expr {
                         _ => return require_number_operands(operator),
                     },
                     TokenKind::Star => {
-                        match (&*RefCell::borrow(&left), &*RefCell::borrow(&right)) {
+                        match (&*left.borrow(), &*right.borrow()) {
                             (Value::Number(left), Value::Number(right)) => {
                                 Value::Number(left * right).into()
                             }
@@ -196,7 +196,7 @@ impl Interpret<Rc<RefCell<Value>>> for Expr {
                         }
                     }
                     TokenKind::Plus => {
-                        match (&*RefCell::borrow(&left), &*RefCell::borrow(&right)) {
+                        match (&*left.borrow(), &*right.borrow()) {
                             (Value::Number(left), Value::Number(right)) => {
                                 Value::Number(left + right).into()
                             }
@@ -213,7 +213,7 @@ impl Interpret<Rc<RefCell<Value>>> for Expr {
                         }
                     }
                     TokenKind::GreaterEqual => {
-                        match (&*RefCell::borrow(&left), &*RefCell::borrow(&right)) {
+                        match (&*left.borrow(), &*right.borrow()) {
                             (Value::Number(left), Value::Number(right)) => {
                                 Value::Boolean(left >= right).into()
                             }
@@ -221,7 +221,7 @@ impl Interpret<Rc<RefCell<Value>>> for Expr {
                         }
                     }
                     TokenKind::Greater => {
-                        match (&*RefCell::borrow(&left), &*RefCell::borrow(&right)) {
+                        match (&*left.borrow(), &*right.borrow()) {
                             (Value::Number(left), Value::Number(right)) => {
                                 Value::Boolean(left > right).into()
                             }
@@ -229,7 +229,7 @@ impl Interpret<Rc<RefCell<Value>>> for Expr {
                         }
                     }
                     TokenKind::Less => {
-                        match (&*RefCell::borrow(&left), &*RefCell::borrow(&right)) {
+                        match (&*left.borrow(), &*right.borrow()) {
                             (Value::Number(left), Value::Number(right)) => {
                                 Value::Boolean(left < right).into()
                             }
@@ -237,7 +237,7 @@ impl Interpret<Rc<RefCell<Value>>> for Expr {
                         }
                     }
                     TokenKind::LessEqual => {
-                        match (&*RefCell::borrow(&left), &*RefCell::borrow(&right)) {
+                        match (&*left.borrow(), &*right.borrow()) {
                             (Value::Number(left), Value::Number(right)) => {
                                 Value::Boolean(left <= right).into()
                             }
@@ -245,13 +245,13 @@ impl Interpret<Rc<RefCell<Value>>> for Expr {
                         }
                     }
                     TokenKind::BangEqual => Value::Boolean(!is_equal(
-                        &*RefCell::borrow(&left),
-                        &*RefCell::borrow(&right),
+                        &left.borrow(),
+                        &right.borrow(),
                     ))
                     .into(),
                     TokenKind::EqualEqual => Value::Boolean(is_equal(
-                        &*RefCell::borrow(&left),
-                        &*RefCell::borrow(&right),
+                        &left.borrow(),
+                        &right.borrow(),
                     ))
                     .into(),
                     _ => {
@@ -268,9 +268,9 @@ impl Interpret<Rc<RefCell<Value>>> for Expr {
                 let right = right.interpret(env)?;
 
                 match operator.kind {
-                    TokenKind::Bang => Value::Boolean(!is_truthy(&*RefCell::borrow(&right))).into(),
+                    TokenKind::Bang => Value::Boolean(!is_truthy(&right.borrow())).into(),
                     TokenKind::Minus => {
-                        if let Value::Number(number) = &*RefCell::borrow(&right) {
+                        if let Value::Number(number) = &*right.borrow() {
                             Value::Number(-*number).into()
                         } else {
                             return require_number_operand(operator);
