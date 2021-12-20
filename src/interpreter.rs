@@ -69,7 +69,7 @@ impl Interpreter {
 
 #[derive(Default)]
 struct Environment {
-    values: HashMap<String, Rc<RefCell<Value>>>,
+    values: HashMap<String, Option<Rc<RefCell<Value>>>>,
     enclosing: Option<Rc<RefCell<Environment>>>,
 }
 
@@ -81,13 +81,19 @@ impl Environment {
         }
     }
 
-    fn define(&mut self, name: impl Into<String>, value: Rc<RefCell<Value>>) {
+    fn define(&mut self, name: impl Into<String>, value: Option<Rc<RefCell<Value>>>) {
         self.values.insert(name.into(), value);
     }
 
     fn get(&self, name: Token) -> Result<Rc<RefCell<Value>>, RuntimeError> {
         if let Some(value) = self.values.get(&name.lexeme) {
-            return Ok(Rc::clone(value));
+            return match value {
+                Some(value) => Ok(Rc::clone(value)),
+                None => Err(RuntimeError {
+                    message: format!("Uninitialized variable '{}'.", name.lexeme),
+                    token: name,
+                }),
+            };
         }
         if let Some(enclosing) = &self.enclosing {
             return enclosing.borrow().get(name);
@@ -100,7 +106,7 @@ impl Environment {
 
     fn assign(&mut self, name: Token, value: Rc<RefCell<Value>>) -> Result<(), RuntimeError> {
         if self.values.contains_key(&name.lexeme) {
-            self.values.insert(name.lexeme, value);
+            self.values.insert(name.lexeme, Some(value));
             return Ok(());
         }
         if let Some(enclosing) = &self.enclosing {
@@ -144,9 +150,9 @@ impl Interpret<()> for Stmt {
             }
             Stmt::Var { name, initializer } => {
                 let value = if let Some(initializer) = initializer {
-                    initializer.interpret(Rc::clone(&env))?
+                    Some(initializer.interpret(Rc::clone(&env))?)
                 } else {
-                    Value::Nil.into()
+                    None
                 };
 
                 env.borrow_mut().define(name.lexeme, value)
