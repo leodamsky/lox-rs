@@ -55,13 +55,13 @@ pub(crate) struct RuntimeError {
 
 #[derive(Default)]
 pub(crate) struct Interpreter {
-    environment: Environment,
+    environment: Rc<RefCell<Environment>>,
 }
 
 impl Interpreter {
     pub(crate) fn interpret(&mut self, statements: Vec<Stmt>) -> Result<(), RuntimeError> {
         for statement in statements {
-            statement.interpret(&mut self.environment)?;
+            statement.interpret(Rc::clone(&self.environment))?;
         }
         Ok(())
     }
@@ -70,43 +70,71 @@ impl Interpreter {
 #[derive(Default)]
 struct Environment {
     values: HashMap<String, Rc<RefCell<Value>>>,
+    enclosing: Option<Rc<RefCell<Environment>>>,
 }
 
 impl Environment {
+    pub(crate) fn child(enclosing: Rc<RefCell<Environment>>) -> Environment {
+        Environment {
+            values: HashMap::new(),
+            enclosing: Some(enclosing),
+        }
+    }
+
     fn define(&mut self, name: impl Into<String>, value: Rc<RefCell<Value>>) {
         self.values.insert(name.into(), value);
     }
 
-    fn get(&mut self, name: Token) -> Result<Rc<RefCell<Value>>, RuntimeError> {
-        match self.values.get(&name.lexeme) {
-            Some(value) => Ok(Rc::clone(value)),
-            None => Err(RuntimeError {
-                message: format!("Undefined variable '{}'.", name.lexeme),
-                token: name,
-            }),
+    fn get(&self, name: Token) -> Result<Rc<RefCell<Value>>, RuntimeError> {
+        if let Some(value) = self.values.get(&name.lexeme) {
+            return Ok(Rc::clone(value));
         }
+        if let Some(enclosing) = &self.enclosing {
+            return enclosing.borrow().get(name);
+        }
+        Err(RuntimeError {
+            message: format!("Undefined variable '{}'.", name.lexeme),
+            token: name,
+        })
     }
 
     fn assign(&mut self, name: Token, value: Rc<RefCell<Value>>) -> Result<(), RuntimeError> {
         if self.values.contains_key(&name.lexeme) {
             self.values.insert(name.lexeme, value);
-            Ok(())
-        } else {
-            Err(RuntimeError {
-                message: format!("Undefined variable '{}'.", &name.lexeme),
-                token: name,
-            })
+            return Ok(());
         }
+        if let Some(enclosing) = &self.enclosing {
+            return enclosing.borrow_mut().assign(name, value);
+        }
+        Err(RuntimeError {
+            message: format!("Undefined variable '{}'.", &name.lexeme),
+            token: name,
+        })
     }
 }
 
 trait Interpret<T> {
-    fn interpret(self, env: &mut Environment) -> Result<T, RuntimeError>;
+    // TODO: can it be refactor to &mut Environment ?
+    fn interpret(self, env: Rc<RefCell<Environment>>) -> Result<T, RuntimeError>;
 }
 
 impl Interpret<()> for Stmt {
-    fn interpret(self, env: &mut Environment) -> Result<(), RuntimeError> {
+    fn interpret(self, env: Rc<RefCell<Environment>>) -> Result<(), RuntimeError> {
+        fn execute_block(
+            statements: Vec<Stmt>,
+            env: Rc<RefCell<Environment>>,
+        ) -> Result<(), RuntimeError> {
+            for statement in statements {
+                statement.interpret(Rc::clone(&env))?;
+            }
+            Ok(())
+        }
+
         match self {
+            Stmt::Block(statements) => {
+                let enclosing = Rc::new(RefCell::new(Environment::child(env)));
+                execute_block(statements, enclosing)?;
+            }
             Stmt::Expression(expr) => {
                 expr.interpret(env)?;
             }
@@ -116,12 +144,12 @@ impl Interpret<()> for Stmt {
             }
             Stmt::Var { name, initializer } => {
                 let value = if let Some(initializer) = initializer {
-                    initializer.interpret(env)?
+                    initializer.interpret(Rc::clone(&env))?
                 } else {
                     Value::Nil.into()
                 };
 
-                env.define(name.lexeme, value)
+                env.borrow_mut().define(name.lexeme, value)
             }
         }
         Ok(())
@@ -129,11 +157,11 @@ impl Interpret<()> for Stmt {
 }
 
 impl Interpret<Rc<RefCell<Value>>> for Expr {
-    fn interpret(self, env: &mut Environment) -> Result<Rc<RefCell<Value>>, RuntimeError> {
+    fn interpret(self, env: Rc<RefCell<Environment>>) -> Result<Rc<RefCell<Value>>, RuntimeError> {
         let expr: Rc<RefCell<Value>> = match self {
-            Expr::Assign { name, value} => {
-                let value = value.interpret(env)?;
-                env.assign(name, Rc::clone(&value))?;
+            Expr::Assign { name, value } => {
+                let value = value.interpret(Rc::clone(&env))?;
+                env.borrow_mut().assign(name, Rc::clone(&value))?;
                 value
             }
             Expr::Binary {
@@ -141,7 +169,7 @@ impl Interpret<Rc<RefCell<Value>>> for Expr {
                 operator,
                 right,
             } => {
-                let left = left.interpret(env)?;
+                let left = left.interpret(Rc::clone(&env))?;
                 let right = right.interpret(env)?;
 
                 match operator.kind {
@@ -256,7 +284,7 @@ impl Interpret<Rc<RefCell<Value>>> for Expr {
                     }
                 }
             }
-            Expr::Variable { name } => env.get(name)?,
+            Expr::Variable { name } => env.borrow().get(name)?,
         };
         Ok(expr)
     }

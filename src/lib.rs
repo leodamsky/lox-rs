@@ -84,6 +84,7 @@ impl Lox {
 
 #[derive(Debug)]
 pub(crate) enum Stmt {
+    Block(Vec<Stmt>),
     Expression(Expr),
     Print(Expr),
     Var {

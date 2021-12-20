@@ -7,7 +7,7 @@ use TokenKind::{
     While, EOF,
 };
 
-use crate::TokenKind::{Equal, Identifier, RightParen};
+use crate::TokenKind::{Equal, Identifier, LeftBrace, RightBrace, RightParen};
 use crate::{Expr, Literal, Lox, Stmt, Token, TokenKind};
 
 #[derive(Debug)]
@@ -72,6 +72,8 @@ impl<'a> Parser<'a> {
     fn statement(&mut self) -> Result<Stmt, ParseError> {
         if self.try_consume(&Print).is_some() {
             self.print_statement()
+        } else if self.try_consume(&LeftBrace).is_some() {
+            Ok(Stmt::Block(self.block()?))
         } else {
             self.expression_statement()
         }
@@ -87,6 +89,18 @@ impl<'a> Parser<'a> {
         let value = self.expression()?;
         self.consume(&Semicolon, "Expect ';' after expression.")?;
         Ok(Stmt::Expression(value))
+    }
+
+    fn block(&mut self) -> Result<Vec<Stmt>, ParseError> {
+        let mut statements = vec![];
+        while let Some(token) = self.peek() {
+            if token.kind == RightBrace {
+                break;
+            }
+            statements.push(self.declaration()?);
+        }
+        self.consume(&RightBrace, "Expect '}' after block.")?;
+        Ok(statements)
     }
 
     fn expression(&mut self) -> Result<Expr, ParseError> {
