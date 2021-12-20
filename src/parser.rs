@@ -7,7 +7,7 @@ use TokenKind::{
     While, EOF,
 };
 
-use crate::TokenKind::{Else, Equal, Identifier, LeftBrace, RightBrace, RightParen};
+use crate::TokenKind::{And, Else, Equal, Identifier, LeftBrace, Or, RightBrace, RightParen};
 use crate::{Expr, Literal, Lox, Stmt, Token, TokenKind};
 
 #[derive(Debug)]
@@ -129,7 +129,7 @@ impl<'a> Parser<'a> {
     }
 
     fn assignment(&mut self) -> Result<Expr, ParseError> {
-        let expr = self.equality()?;
+        let expr = self.or()?;
 
         if let Some(equals) = self.try_consume(&Equal) {
             let value = self.assignment()?;
@@ -142,6 +142,36 @@ impl<'a> Parser<'a> {
             }
 
             self.error(&equals, "Invalid assignment target.");
+        }
+
+        Ok(expr)
+    }
+
+    fn or(&mut self) -> Result<Expr, ParseError> {
+        let mut expr = self.and()?;
+
+        while let Some(operator) = self.try_consume(&Or) {
+            let right = self.and()?;
+            expr = Expr::Logical {
+                left: expr.into(),
+                operator,
+                right: right.into(),
+            };
+        }
+
+        Ok(expr)
+    }
+
+    fn and(&mut self) -> Result<Expr, ParseError> {
+        let mut expr = self.equality()?;
+
+        while let Some(operator) = self.try_consume(&And) {
+            let right = self.equality()?;
+            expr = Expr::Logical {
+                left: expr.into(),
+                operator,
+                right: right.into(),
+            };
         }
 
         Ok(expr)
