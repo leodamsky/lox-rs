@@ -48,7 +48,7 @@ impl<'a> Scanner<'a> {
             start: 0,
             current: 0,
             line: 1,
-            lox
+            lox,
         }
     }
 
@@ -129,7 +129,9 @@ impl<'a> Scanner<'a> {
             '"' => self.string(),
             '0'..='9' => self.number(),
             'a'..='z' | 'A'..='Z' | '_' => self.identifier(),
-            _ => self.lox.scan_error(self.line, "Unexpected character.".to_string()),
+            _ => self
+                .lox
+                .scan_error(self.line, "Unexpected character.".to_string()),
         }
     }
 
@@ -173,7 +175,8 @@ impl<'a> Scanner<'a> {
         }
 
         if self.is_at_end() {
-            self.lox.scan_error(self.line, "Unterminated string.".to_string());
+            self.lox
+                .scan_error(self.line, "Unterminated string.".to_string());
             return;
         }
 

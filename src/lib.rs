@@ -1,5 +1,4 @@
 use crate::interpreter::{Interpreter, RuntimeError};
-use std::error::Error;
 use std::fmt::{Display, Formatter};
 
 use crate::parser::Parser;
@@ -25,21 +24,19 @@ impl Lox {
         }
     }
 
-    pub fn run(&mut self, source: impl Into<String>) -> Result<(), Box<dyn Error>> {
+    pub fn run(&mut self, source: impl Into<String>) {
         let tokens = Scanner::new(source.into(), self).scan_tokens();
         let statements = Parser::new(tokens, self).parse();
 
         // stop if there was a syntax error.
         if self.had_error() {
-            return Ok(());
+            return;
         }
 
         let statements = statements.expect("Expected statements cause had no error.");
         if let Err(e) = self.interpreter.interpret(statements) {
             self.runtime_error(e);
         }
-
-        Ok(())
     }
 
     pub fn had_error(&self) -> bool {
