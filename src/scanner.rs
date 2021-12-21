@@ -61,7 +61,7 @@ impl<'a> Scanner<'a> {
 
         self.tokens.push(Token {
             kind: EOF,
-            lexeme: String::new(),
+            lexeme: String::new().into(),
             literal: None,
             line: self.line,
         });
@@ -184,7 +184,7 @@ impl<'a> Scanner<'a> {
         self.advance();
 
         let value = self.source[(self.start + 1)..(self.current - 1)].to_string();
-        self.add_token(TokenKind::String, Some(Literal::String(value)));
+        self.add_token(TokenKind::String, Some(Literal::String(value.into())));
     }
 
     fn consume_next(&mut self, expected: char) -> bool {
@@ -242,7 +242,7 @@ impl<'a> Scanner<'a> {
         let text = self.source[self.start..self.current].to_string();
         self.tokens.push(Token {
             kind,
-            lexeme: text,
+            lexeme: text.into(),
             literal,
             line: self.line,
         });

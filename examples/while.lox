@@ -1,0 +1,9 @@
+var count = 0;
+var laugh = "HAHA";
+
+while (count < 5) {
+    print count;
+    laugh = laugh + laugh;
+    print laugh;
+    count = count + 1;
+}

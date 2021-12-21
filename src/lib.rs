@@ -1,9 +1,10 @@
 use crate::interpreter::{Interpreter, RuntimeError};
 use std::fmt::{Display, Formatter};
+use std::fs;
+use std::rc::Rc;
 
 use crate::parser::Parser;
 use crate::scanner::Scanner;
-use crate::TokenKind::EOF;
 
 mod interpreter;
 mod parser;
@@ -21,6 +22,13 @@ impl Lox {
             had_error: false,
             had_runtime_error: false,
             interpreter: Interpreter::default(),
+        }
+    }
+
+    pub fn run_file(&mut self, path: String) {
+        match fs::read_to_string(path) {
+            Ok(source_code) => self.run(source_code),
+            Err(e) => self.scan_error(0, e.to_string()),
         }
     }
 
@@ -51,12 +59,12 @@ impl Lox {
         self.had_error = value;
     }
 
-    pub(crate) fn scan_error(&mut self, line: usize, message: impl AsRef<str>) {
+    pub fn scan_error(&mut self, line: usize, message: impl AsRef<str>) {
         self.report(line, "", message);
     }
 
     pub(crate) fn syntax_error(&mut self, token: &Token, message: impl AsRef<str>) {
-        if token.kind == EOF {
+        if let TokenKind::EOF = token.kind {
             self.report(token.line, " at end", message);
         } else {
             self.report(token.line, format!(" at '{}'", &token.lexeme), message)
@@ -79,7 +87,6 @@ impl Lox {
     }
 }
 
-#[derive(Debug, Clone)]
 pub(crate) enum Stmt {
     Block(Vec<Stmt>),
     Expression(Expr),
@@ -99,15 +106,14 @@ pub(crate) enum Stmt {
     },
 }
 
-#[derive(Debug, Clone)]
 pub(crate) enum Expr {
     Assign {
-        name: Token,
+        name: Rc<Token>,
         value: Box<Expr>,
     },
     Binary {
         left: Box<Expr>,
-        operator: Token,
+        operator: Rc<Token>,
         right: Box<Expr>,
     },
     Grouping(Box<Expr>),
@@ -118,18 +124,18 @@ pub(crate) enum Expr {
         right: Box<Expr>,
     },
     Unary {
-        operator: Token,
+        operator: Rc<Token>,
         right: Box<Expr>,
     },
     Variable {
-        name: Token,
+        name: Rc<Token>,
     },
 }
 
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub(crate) enum Literal {
     Number(f64),
-    String(String),
+    String(Rc<String>),
     Boolean(bool),
     Nil,
 }
@@ -145,15 +151,14 @@ impl Display for Literal {
     }
 }
 
-#[derive(Debug, Clone)]
 pub(crate) struct Token {
     kind: TokenKind,
-    lexeme: String,
+    lexeme: Rc<String>,
     literal: Option<Literal>,
     line: usize,
 }
 
-#[derive(Debug, Copy, Clone, Eq, PartialEq)]
+#[derive(Copy, Clone, Eq, PartialEq)]
 pub(crate) enum TokenKind {
     // single-character tokens
     LeftParen,

@@ -8,7 +8,7 @@ use crate::{Expr, Literal, Stmt, Token, TokenKind};
 #[derive(Debug)]
 pub(crate) enum Value {
     Number(f64),
-    String(String),
+    String(Rc<String>),
     Boolean(bool),
     Nil,
 }
@@ -31,12 +31,12 @@ impl Display for Value {
     }
 }
 
-impl From<Literal> for Value {
-    fn from(literal: Literal) -> Self {
+impl From<&Literal> for Value {
+    fn from(literal: &Literal) -> Self {
         match literal {
-            Literal::Number(n) => Value::Number(n),
-            Literal::String(s) => Value::String(s),
-            Literal::Boolean(b) => Value::Boolean(b),
+            Literal::Number(n) => Value::Number(*n),
+            Literal::String(s) => Value::String(Rc::clone(s)),
+            Literal::Boolean(b) => Value::Boolean(*b),
             Literal::Nil => Value::Nil,
         }
     }
@@ -50,7 +50,7 @@ impl From<Value> for Rc<RefCell<Value>> {
 
 pub(crate) struct RuntimeError {
     pub(crate) message: String,
-    pub(crate) token: Token,
+    pub(crate) token: Rc<Token>,
 }
 
 #[derive(Default)]
@@ -69,7 +69,7 @@ impl Interpreter {
 
 #[derive(Default)]
 struct Environment {
-    values: HashMap<String, Rc<RefCell<Value>>>,
+    values: HashMap<Rc<String>, Rc<RefCell<Value>>>,
     enclosing: Option<Rc<RefCell<Environment>>>,
 }
 
@@ -81,11 +81,11 @@ impl Environment {
         }
     }
 
-    fn define(&mut self, name: impl Into<String>, value: Rc<RefCell<Value>>) {
-        self.values.insert(name.into(), value);
+    fn define(&mut self, name: &Rc<String>, value: Rc<RefCell<Value>>) {
+        self.values.insert(Rc::clone(name), value);
     }
 
-    fn get(&self, name: Token) -> Result<Rc<RefCell<Value>>, RuntimeError> {
+    fn get(&self, name: &Rc<Token>) -> Result<Rc<RefCell<Value>>, RuntimeError> {
         if let Some(value) = self.values.get(&name.lexeme) {
             return Ok(Rc::clone(value));
         }
@@ -94,34 +94,34 @@ impl Environment {
         }
         Err(RuntimeError {
             message: format!("Undefined variable '{}'.", name.lexeme),
-            token: name,
+            token: Rc::clone(name),
         })
     }
 
-    fn assign(&mut self, name: Token, value: Rc<RefCell<Value>>) -> Result<(), RuntimeError> {
+    fn assign(&mut self, name: &Rc<Token>, value: Rc<RefCell<Value>>) -> Result<(), RuntimeError> {
         if self.values.contains_key(&name.lexeme) {
-            self.values.insert(name.lexeme, value);
+            self.values.insert(Rc::clone(&name.lexeme), value);
             return Ok(());
         }
         if let Some(enclosing) = &self.enclosing {
             return enclosing.borrow_mut().assign(name, value);
         }
         Err(RuntimeError {
-            message: format!("Undefined variable '{}'.", &name.lexeme),
-            token: name,
+            message: format!("Undefined variable '{}'.", name.lexeme),
+            token: Rc::clone(name),
         })
     }
 }
 
 trait Interpret<T> {
     // TODO: can it be refactor to &mut Environment ?
-    fn interpret(self, env: Rc<RefCell<Environment>>) -> Result<T, RuntimeError>;
+    fn interpret(&self, env: Rc<RefCell<Environment>>) -> Result<T, RuntimeError>;
 }
 
 impl Interpret<()> for Stmt {
-    fn interpret(self, env: Rc<RefCell<Environment>>) -> Result<(), RuntimeError> {
+    fn interpret(&self, env: Rc<RefCell<Environment>>) -> Result<(), RuntimeError> {
         fn execute_block(
-            statements: Vec<Stmt>,
+            statements: &Vec<Stmt>,
             env: Rc<RefCell<Environment>>,
         ) -> Result<(), RuntimeError> {
             for statement in statements {
@@ -154,8 +154,8 @@ impl Interpret<()> for Stmt {
                 println!("{}", value.borrow());
             }
             Stmt::While { condition, body } => {
-                while is_truthy(&condition.clone().interpret(Rc::clone(&env))?.borrow()) {
-                    body.clone().interpret(Rc::clone(&env))?;
+                while is_truthy(&condition.interpret(Rc::clone(&env))?.borrow()) {
+                    body.interpret(Rc::clone(&env))?;
                 }
             }
             Stmt::Var { name, initializer } => {
@@ -165,7 +165,7 @@ impl Interpret<()> for Stmt {
                     Value::Nil.into()
                 };
 
-                env.borrow_mut().define(name.lexeme, value)
+                env.borrow_mut().define(&name.lexeme, value)
             }
         }
         Ok(())
@@ -173,7 +173,7 @@ impl Interpret<()> for Stmt {
 }
 
 impl Interpret<Rc<RefCell<Value>>> for Expr {
-    fn interpret(self, env: Rc<RefCell<Environment>>) -> Result<Rc<RefCell<Value>>, RuntimeError> {
+    fn interpret(&self, env: Rc<RefCell<Environment>>) -> Result<Rc<RefCell<Value>>, RuntimeError> {
         let expr: Rc<RefCell<Value>> = match self {
             Expr::Assign { name, value } => {
                 let value = value.interpret(Rc::clone(&env))?;
@@ -212,11 +212,11 @@ impl Interpret<Rc<RefCell<Value>>> for Expr {
                             Value::Number(left + right).into()
                         }
                         (Value::String(left), Value::String(right)) => {
-                            Value::String(format!("{}{}", left, right)).into()
+                            Value::String(Rc::new(format!("{}{}", left, right))).into()
                         }
                         _ => {
                             return Err(RuntimeError {
-                                token: operator,
+                                token: Rc::clone(operator),
                                 message: "Operands must be two numbers or two string.".to_string(),
                             })
                         }
@@ -254,7 +254,7 @@ impl Interpret<Rc<RefCell<Value>>> for Expr {
                     _ => {
                         return Err(RuntimeError {
                             message: format!("Not supported binary operator: {}", operator.lexeme),
-                            token: operator,
+                            token: Rc::clone(operator),
                         })
                     }
                 }
@@ -293,7 +293,7 @@ impl Interpret<Rc<RefCell<Value>>> for Expr {
                     _ => {
                         return Err(RuntimeError {
                             message: format!("Unsupported unary operator: {}", operator.lexeme),
-                            token: operator,
+                            token: Rc::clone(operator),
                         })
                     }
                 }
@@ -322,16 +322,16 @@ fn is_equal(left: &Value, right: &Value) -> bool {
     }
 }
 
-fn require_number_operand<T>(token: Token) -> Result<T, RuntimeError> {
+fn require_number_operand<T>(token: &Rc<Token>) -> Result<T, RuntimeError> {
     Err(RuntimeError {
-        token,
+        token: Rc::clone(token),
         message: "Operand must be a number.".to_string(),
     })
 }
 
-fn require_number_operands<T>(token: Token) -> Result<T, RuntimeError> {
+fn require_number_operands<T>(token: &Rc<Token>) -> Result<T, RuntimeError> {
     Err(RuntimeError {
-        token,
+        token: Rc::clone(token),
         message: "Operand must be a number.".to_string(),
     })
 }

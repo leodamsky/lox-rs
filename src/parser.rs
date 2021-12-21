@@ -86,7 +86,7 @@ impl<'a> Parser<'a> {
     fn if_statement(&mut self) -> Result<Stmt, ParseError> {
         self.consume(&LeftParen, "Expect '(' after 'if'.")?;
         let condition = self.expression()?;
-        self.consume(&RightParen, "Exprct ')' after if condition.")?;
+        self.consume(&RightParen, "Expect ')' after if condition.")?;
 
         let then_branch = self.statement()?.into();
         let else_branch = if self.try_consume(&Else).is_some() {
@@ -127,7 +127,7 @@ impl<'a> Parser<'a> {
     fn block(&mut self) -> Result<Vec<Stmt>, ParseError> {
         let mut statements = vec![];
         while let Some(token) = self.peek() {
-            if token.kind == RightBrace {
+            if let TokenKind::RightBrace = token.kind {
                 break;
             }
             statements.push(self.declaration()?);
@@ -209,7 +209,7 @@ impl<'a> Parser<'a> {
         if let Some(operator) = self.try_consume_any(&[Bang, Minus]) {
             let right = self.unary()?;
             Ok(Expr::Unary {
-                operator,
+                operator: operator.into(),
                 right: right.into(),
             })
         } else {
@@ -240,7 +240,7 @@ impl<'a> Parser<'a> {
                 self.consume(&RightParen, "Expect ')' after expression.")?;
                 Expr::Grouping(expr.into())
             }
-            Identifier => Expr::Variable { name: candidate },
+            Identifier => Expr::Variable { name: candidate.into() },
             _ => return Err(self.error(&candidate, "Expect expression.")),
         };
 
@@ -260,7 +260,7 @@ impl<'a> Parser<'a> {
             let right = handle(self)?;
             expr = Expr::Binary {
                 left: expr.into(),
-                operator,
+                operator: operator.into(),
                 right: right.into(),
             };
         }

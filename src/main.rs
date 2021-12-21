@@ -1,9 +1,8 @@
 use lox::Lox;
-use std::error::Error;
 use std::io::Write;
-use std::{env, fs, io, process};
+use std::{env, io, process};
 
-fn main() -> Result<(), Box<dyn Error>> {
+fn main() {
     let args = env::args().collect::<Vec<_>>();
     match args.len() {
         1 => run_prompt(),
@@ -15,39 +14,43 @@ fn main() -> Result<(), Box<dyn Error>> {
     }
 }
 
-fn run_file(path: String) -> Result<(), Box<dyn Error>> {
-    let source_code = fs::read_to_string(path)?;
+fn run_file(path: String) {
     let mut lox = Lox::new();
-    lox.run(source_code);
+    lox.run_file(path);
     if lox.had_error() {
         process::exit(65);
     }
     if lox.had_runtime_error() {
         process::exit(70);
     }
-    Ok(())
 }
 
-fn run_prompt() -> Result<(), Box<dyn Error>> {
+fn run_prompt() {
     let mut lox = Lox::new();
-    let stdin = io::stdin();
     let mut buf = String::new();
     loop {
         print!("> ");
-        io::stdout().flush()?;
-        let read = stdin.read_line(&mut buf)?;
-        if read == 0 {
-            break;
-        }
-        // should be in a separate crate?
-        if buf.ends_with('\n') {
-            buf.pop();
-            if buf.ends_with('\r') {
-                buf.pop();
+        match flush_and_read(&mut buf) {
+            Ok(read) => {
+                if read == 0 {
+                    break;
+                }
+                // should be in a separate crate?
+                if buf.ends_with('\n') {
+                    buf.pop();
+                    if buf.ends_with('\r') {
+                        buf.pop();
+                    }
+                }
+                lox.run(buf.drain(..).collect::<String>());
             }
+            Err(e) => lox.scan_error(0, e.to_string()),
         }
-        lox.run(buf.drain(..).collect::<String>());
         lox.set_had_error(false);
     }
-    Ok(())
+}
+
+fn flush_and_read(buf: &mut String) -> io::Result<usize> {
+    io::stdout().flush()?;
+    io::stdin().read_line(buf)
 }
