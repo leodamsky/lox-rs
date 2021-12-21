@@ -118,6 +118,8 @@ trait Interpret<T> {
     fn interpret(&self, env: Rc<RefCell<Environment>>) -> Result<T, RuntimeError>;
 }
 
+const BREAK_INVALID_USE_MSG: &str = "'break' outside loop";
+
 impl Interpret<()> for Stmt {
     fn interpret(&self, env: Rc<RefCell<Environment>>) -> Result<(), RuntimeError> {
         fn execute_block(
@@ -155,7 +157,15 @@ impl Interpret<()> for Stmt {
             }
             Stmt::While { condition, body } => {
                 while is_truthy(&condition.interpret(Rc::clone(&env))?.borrow()) {
-                    body.interpret(Rc::clone(&env))?;
+                    if let Err(e) = body.interpret(Rc::clone(&env)) {
+                        // FIXME: use a special kind of RuntimeError
+                        //  instead of relying on the message itself
+                        if &e.message == BREAK_INVALID_USE_MSG {
+                            break;
+                        } else {
+                            return Err(e);
+                        }
+                    }
                 }
             }
             Stmt::Var { name, initializer } => {
@@ -167,6 +177,10 @@ impl Interpret<()> for Stmt {
 
                 env.borrow_mut().define(&name.lexeme, value)
             }
+            Stmt::Break(token) => return Err(RuntimeError {
+                message: BREAK_INVALID_USE_MSG.to_string(),
+                token: Rc::clone(token),
+            }),
         }
         Ok(())
     }

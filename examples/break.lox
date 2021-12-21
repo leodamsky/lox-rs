@@ -1,0 +1,12 @@
+var count = 5;
+while (true) {
+    if (count == 10) {
+        break;
+    }
+    print "outer";
+    while (true) {
+        print "inner";
+        break;
+    }
+    count = count + 1;
+}

@@ -1,5 +1,5 @@
 use crate::TokenKind::{
-    self, And, Bang, BangEqual, Class, Comma, Dot, Else, Equal, EqualEqual, False, For, Fun,
+    self, And, Bang, BangEqual, Break, Class, Comma, Dot, Else, Equal, EqualEqual, False, For, Fun,
     Greater, GreaterEqual, Identifier, If, LeftBrace, LeftParen, Less, LessEqual, Minus, Nil,
     Number, Or, Plus, Print, Return, RightBrace, RightParen, Semicolon, Slash, Star, Super, This,
     True, Var, While, EOF,
@@ -26,6 +26,7 @@ lazy_static! {
         ("true", True),
         ("var", Var),
         ("while", While),
+        ("break", Break),
     ]
     .into_iter()
     .collect();

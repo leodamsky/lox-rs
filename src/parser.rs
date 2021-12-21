@@ -1,4 +1,5 @@
 use std::iter::Peekable;
+use std::rc::Rc;
 use std::vec::IntoIter;
 
 use TokenKind::{
@@ -7,7 +8,7 @@ use TokenKind::{
     While, EOF,
 };
 
-use crate::TokenKind::{And, Else, Equal, Identifier, LeftBrace, Or, RightBrace, RightParen};
+use crate::TokenKind::{And, Break, Else, Equal, Identifier, LeftBrace, Or, RightBrace, RightParen};
 use crate::{Expr, Literal, Lox, Stmt, Token, TokenKind};
 
 #[derive(Debug)]
@@ -80,6 +81,9 @@ impl<'a> Parser<'a> {
             self.while_statement()
         } else if self.try_consume(&LeftBrace).is_some() {
             Ok(Stmt::Block(self.block()?))
+        } else if let Some(token) = self.try_consume(&Break) {
+            self.consume(&Semicolon, "Expect ';' after 'break'.")?;
+            Ok(Stmt::Break(Rc::new(token)))
         } else {
             self.expression_statement()
         }

@@ -104,6 +104,7 @@ pub(crate) enum Stmt {
         name: Token,
         initializer: Option<Expr>,
     },
+    Break(Rc<Token>),
 }
 
 pub(crate) enum Expr {
@@ -205,6 +206,7 @@ pub(crate) enum TokenKind {
     True,
     Var,
     While,
+    Break,
 
     EOF,
 }
