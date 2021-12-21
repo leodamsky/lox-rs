@@ -70,7 +70,9 @@ impl<'a> Parser<'a> {
     }
 
     fn statement(&mut self) -> Result<Stmt, ParseError> {
-        if self.try_consume(&If).is_some() {
+        if self.try_consume(&For).is_some() {
+            self.for_statement()
+        } else if self.try_consume(&If).is_some() {
             self.if_statement()
         } else if self.try_consume(&Print).is_some() {
             self.print_statement()
@@ -81,6 +83,47 @@ impl<'a> Parser<'a> {
         } else {
             self.expression_statement()
         }
+    }
+
+    fn for_statement(&mut self) -> Result<Stmt, ParseError> {
+        self.consume(&LeftParen, "Expect '(' after 'for'.")?;
+        let initializer = if self.try_consume(&Semicolon).is_some() {
+            None
+        } else if self.try_consume(&Var).is_some() {
+            Some(self.var_declaration()?)
+        } else {
+            Some(self.expression_statement()?)
+        };
+        let condition = if self.check(&Semicolon) {
+            None
+        } else {
+            Some(self.expression()?)
+        };
+        self.consume(&Semicolon, "Expect ';' after loop condition.")?;
+        let increment = if self.check(&RightParen) {
+            None
+        } else {
+            Some(self.expression()?)
+        };
+        self.consume(&RightParen, "Expect ')' after for clauses.")?;
+
+        let mut body = self.statement()?;
+
+        if let Some(increment) = increment {
+            body = Stmt::Block(vec![body, Stmt::Expression(increment)]);
+        }
+
+        let condition = condition.unwrap_or_else(|| Expr::Literal(Literal::Boolean(true)));
+        body = Stmt::While {
+            condition,
+            body: body.into(),
+        };
+
+        if let Some(initializer) = initializer {
+            body = Stmt::Block(vec![initializer, body]);
+        }
+
+        Ok(body)
     }
 
     fn if_statement(&mut self) -> Result<Stmt, ParseError> {
@@ -240,7 +283,9 @@ impl<'a> Parser<'a> {
                 self.consume(&RightParen, "Expect ')' after expression.")?;
                 Expr::Grouping(expr.into())
             }
-            Identifier => Expr::Variable { name: candidate.into() },
+            Identifier => Expr::Variable {
+                name: candidate.into(),
+            },
             _ => return Err(self.error(&candidate, "Expect expression.")),
         };
 
@@ -298,6 +343,13 @@ impl<'a> Parser<'a> {
     fn advance(&mut self) -> Option<Token> {
         self.peek()?;
         self.tokens.next()
+    }
+
+    fn check(&mut self, kind: &TokenKind) -> bool {
+        match self.peek().map(|t| t.kind) {
+            Some(actual) => &actual == kind,
+            None => false,
+        }
     }
 
     fn peek(&mut self) -> Option<&Token> {
