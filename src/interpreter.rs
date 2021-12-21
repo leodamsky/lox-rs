@@ -153,6 +153,11 @@ impl Interpret<()> for Stmt {
                 let value = expr.interpret(env)?;
                 println!("{}", value.borrow());
             }
+            Stmt::While { condition, body } => {
+                while is_truthy(&condition.clone().interpret(Rc::clone(&env))?.borrow()) {
+                    body.clone().interpret(Rc::clone(&env))?;
+                }
+            }
             Stmt::Var { name, initializer } => {
                 let value = if let Some(initializer) = initializer {
                     initializer.interpret(Rc::clone(&env))?

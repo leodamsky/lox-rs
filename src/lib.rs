@@ -79,7 +79,7 @@ impl Lox {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub(crate) enum Stmt {
     Block(Vec<Stmt>),
     Expression(Expr),
@@ -89,13 +89,17 @@ pub(crate) enum Stmt {
         else_branch: Option<Box<Stmt>>,
     },
     Print(Expr),
+    While {
+        condition: Expr,
+        body: Box<Stmt>,
+    },
     Var {
         name: Token,
         initializer: Option<Expr>,
     },
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub(crate) enum Expr {
     Assign {
         name: Token,
@@ -122,7 +126,7 @@ pub(crate) enum Expr {
     },
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub(crate) enum Literal {
     Number(f64),
     String(String),
@@ -141,7 +145,7 @@ impl Display for Literal {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub(crate) struct Token {
     kind: TokenKind,
     lexeme: String,

@@ -74,6 +74,8 @@ impl<'a> Parser<'a> {
             self.if_statement()
         } else if self.try_consume(&Print).is_some() {
             self.print_statement()
+        } else if self.try_consume(&While).is_some() {
+            self.while_statement()
         } else if self.try_consume(&LeftBrace).is_some() {
             Ok(Stmt::Block(self.block()?))
         } else {
@@ -110,6 +112,16 @@ impl<'a> Parser<'a> {
         let value = self.expression()?;
         self.consume(&Semicolon, "Expect ';' after expression.")?;
         Ok(Stmt::Expression(value))
+    }
+
+    fn while_statement(&mut self) -> Result<Stmt, ParseError> {
+        self.consume(&LeftParen, "Expect '(' after 'while'.")?;
+        let condition = self.expression()?;
+        self.consume(&RightParen, "Expect ')' after condition.")?;
+
+        let body = self.statement()?.into();
+
+        Ok(Stmt::While { condition, body })
     }
 
     fn block(&mut self) -> Result<Vec<Stmt>, ParseError> {
