@@ -114,6 +114,8 @@ impl<'a> Parser<'a> {
             self.if_statement()
         } else if self.try_consume(&Print).is_some() {
             self.print_statement()
+        } else if let Some(keyword) = self.try_consume(&Return) {
+            self.return_statement(keyword)
         } else if self.try_consume(&While).is_some() {
             self.while_statement()
         } else if self.try_consume(&LeftBrace).is_some() {
@@ -187,6 +189,16 @@ impl<'a> Parser<'a> {
         let value = self.expression()?;
         self.consume(&Semicolon, "Expect ';' after expression.")?;
         Ok(Stmt::Print(value))
+    }
+
+    fn return_statement(&mut self, keyword: Token) -> Result<Stmt, ParseError> {
+        let value = if !self.check(&Semicolon) {
+            Some(self.expression()?)
+        } else {
+            None
+        };
+        self.consume(&Semicolon, "Expect ';' after expression.")?;
+        Ok(Stmt::Return { keyword: Rc::new(keyword), value })
     }
 
     fn expression_statement(&mut self) -> Result<Stmt, ParseError> {

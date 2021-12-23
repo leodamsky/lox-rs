@@ -2,7 +2,7 @@ use std::fmt::{Display, Formatter};
 use std::fs;
 use std::rc::Rc;
 
-use crate::interpreter::{Interpreter, RuntimeError};
+use crate::interpreter::{InterpretError, Interpreter};
 use crate::parser::Parser;
 use crate::scanner::Scanner;
 
@@ -71,7 +71,13 @@ impl Lox {
         }
     }
 
-    pub(crate) fn runtime_error(&mut self, RuntimeError { message, token }: RuntimeError) {
+    pub(crate) fn runtime_error(&mut self, error: InterpretError) {
+        let (message, token) = match error {
+            InterpretError::RuntimeError(e) => (e.message, e.token),
+            InterpretError::Return { token, .. } => {
+                ("Return statement outside function.".to_string(), token)
+            }
+        };
         eprintln!("{}\n[line {}]", message, token.line);
         self.had_runtime_error = true;
     }
@@ -103,6 +109,10 @@ pub(crate) enum Stmt {
         else_branch: Option<Box<Stmt>>,
     },
     Print(Expr),
+    Return {
+        keyword: Rc<Token>,
+        value: Option<Expr>,
+    },
     While {
         condition: Expr,
         body: Box<Stmt>,

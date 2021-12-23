@@ -6,7 +6,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use crate::{Expr, FunctionStmt, Literal, Stmt, Token, TokenKind};
 
-enum Value {
+pub(crate) enum Value {
     Number(f64),
     String(Rc<String>),
     Boolean(bool),
@@ -55,13 +55,27 @@ pub(crate) struct RuntimeError {
     pub(crate) token: Rc<Token>,
 }
 
+pub(crate) enum InterpretError {
+    Return {
+        value: Rc<RefCell<Value>>,
+        token: Rc<Token>,
+    },
+    RuntimeError(RuntimeError),
+}
+
+impl From<RuntimeError> for InterpretError {
+    fn from(e: RuntimeError) -> Self {
+        InterpretError::RuntimeError(e)
+    }
+}
+
 #[derive(Default)]
 pub(crate) struct Interpreter {
     environment: Rc<RefCell<Environment>>,
 }
 
 impl Interpreter {
-    pub(crate) fn interpret(&self, statements: Vec<Stmt>) -> Result<(), RuntimeError> {
+    pub(crate) fn interpret(&self, statements: Vec<Stmt>) -> Result<(), InterpretError> {
         for statement in statements {
             statement.interpret(Rc::clone(&self.environment), Rc::clone(&self.environment))?;
         }
@@ -69,7 +83,7 @@ impl Interpreter {
     }
 }
 
-struct Environment {
+pub(crate) struct Environment {
     enclosing: Option<Rc<RefCell<Environment>>>,
     values: HashMap<Rc<String>, Rc<RefCell<Value>>>,
 }
@@ -150,7 +164,7 @@ trait Interpret<T> {
         &self,
         global: Rc<RefCell<Environment>>,
         env: Rc<RefCell<Environment>>,
-    ) -> Result<T, RuntimeError>;
+    ) -> Result<T, InterpretError>;
 }
 
 impl Interpret<()> for Stmt {
@@ -158,12 +172,12 @@ impl Interpret<()> for Stmt {
         &self,
         global: Rc<RefCell<Environment>>,
         env: Rc<RefCell<Environment>>,
-    ) -> Result<(), RuntimeError> {
+    ) -> Result<(), InterpretError> {
         fn execute_block(
             statements: &Vec<Stmt>,
             global: Rc<RefCell<Environment>>,
             env: Rc<RefCell<Environment>>,
-        ) -> Result<(), RuntimeError> {
+        ) -> Result<(), InterpretError> {
             for statement in statements {
                 statement.interpret(Rc::clone(&global), Rc::clone(&env))?;
             }
@@ -206,6 +220,15 @@ impl Interpret<()> for Stmt {
                 let value = expr.interpret(global, env)?;
                 println!("{}", value.borrow());
             }
+            Stmt::Return { keyword, value } => {
+                let value = if let Some(expr) = value {
+                    expr.interpret(global, env)?
+                } else {
+                    Value::Nil.into()
+                };
+
+                return Err(InterpretError::Return { value, token: Rc::clone(keyword) });
+            }
             Stmt::While { condition, body } => {
                 while is_truthy(
                     &condition
@@ -234,7 +257,7 @@ impl Interpret<Rc<RefCell<Value>>> for Expr {
         &self,
         global: Rc<RefCell<Environment>>,
         env: Rc<RefCell<Environment>>,
-    ) -> Result<Rc<RefCell<Value>>, RuntimeError> {
+    ) -> Result<Rc<RefCell<Value>>, InterpretError> {
         let expr: Rc<RefCell<Value>> = match self {
             Expr::Assign { name, value } => {
                 let value = value.interpret(global, Rc::clone(&env))?;
@@ -279,7 +302,7 @@ impl Interpret<Rc<RefCell<Value>>> for Expr {
                             return Err(RuntimeError {
                                 token: Rc::clone(operator),
                                 message: "Operands must be two numbers or two string.".to_string(),
-                            })
+                            }.into())
                         }
                     },
                     TokenKind::GreaterEqual => match (&*left.borrow(), &*right.borrow()) {
@@ -316,7 +339,7 @@ impl Interpret<Rc<RefCell<Value>>> for Expr {
                         return Err(RuntimeError {
                             message: format!("Not supported binary operator: {}", operator.lexeme),
                             token: Rc::clone(operator),
-                        })
+                        }.into())
                     }
                 }
             }
@@ -342,15 +365,19 @@ impl Interpret<Rc<RefCell<Value>>> for Expr {
                                     args.len()
                                 ),
                                 token: Rc::clone(paren),
-                            });
+                            }.into());
                         }
-                        callable.call(global, env, args)?.into()
+                        match callable.call(global, env, args) {
+                            Ok(value) => value.into(),
+                            Err(InterpretError::Return { value, .. }) => value,
+                            Err(e) => return Err(e),
+                        }
                     }
                     _ => {
                         return Err(RuntimeError {
                             message: "Can only call functions and classes.".to_string(),
                             token: Rc::clone(paren),
-                        });
+                        }.into());
                     }
                 };
                 result
@@ -390,7 +417,7 @@ impl Interpret<Rc<RefCell<Value>>> for Expr {
                         return Err(RuntimeError {
                             message: format!("Unsupported unary operator: {}", operator.lexeme),
                             token: Rc::clone(operator),
-                        })
+                        }.into())
                     }
                 }
             }
@@ -400,7 +427,7 @@ impl Interpret<Rc<RefCell<Value>>> for Expr {
     }
 }
 
-trait Callable: Display {
+pub(crate) trait Callable: Display {
     fn arity(&self) -> usize;
 
     fn call(
@@ -408,13 +435,13 @@ trait Callable: Display {
         global: Rc<RefCell<Environment>>,
         env: Rc<RefCell<Environment>>,
         arguments: Vec<Rc<RefCell<Value>>>,
-    ) -> Result<Value, RuntimeError>;
+    ) -> Result<Value, InterpretError>;
 }
 
 struct NativeFn {
     arity: usize,
     function: Box<
-        dyn Fn(Rc<RefCell<Environment>>, Vec<Rc<RefCell<Value>>>) -> Result<Value, RuntimeError>,
+        dyn Fn(Rc<RefCell<Environment>>, Vec<Rc<RefCell<Value>>>) -> Result<Value, InterpretError>,
     >,
 }
 
@@ -434,7 +461,7 @@ impl Callable for NativeFn {
         _: Rc<RefCell<Environment>>,
         global: Rc<RefCell<Environment>>,
         arguments: Vec<Rc<RefCell<Value>>>,
-    ) -> Result<Value, RuntimeError> {
+    ) -> Result<Value, InterpretError> {
         let env = Rc::new(RefCell::new(Environment::child(global)));
         (self.function)(env, arguments)
     }
@@ -460,7 +487,7 @@ impl Callable for Function {
         global: Rc<RefCell<Environment>>,
         _: Rc<RefCell<Environment>>,
         arguments: Vec<Rc<RefCell<Value>>>,
-    ) -> Result<Value, RuntimeError> {
+    ) -> Result<Value, InterpretError> {
         let env = Rc::new(RefCell::new(Environment::child(Rc::clone(&global))));
         for i in 0..self.declaration.params.len() {
             let name = &self.declaration.params[i].lexeme;
@@ -492,16 +519,16 @@ fn is_equal(left: &Value, right: &Value) -> bool {
     }
 }
 
-fn require_number_operand<T>(token: &Rc<Token>) -> Result<T, RuntimeError> {
+fn require_number_operand<T>(token: &Rc<Token>) -> Result<T, InterpretError> {
     Err(RuntimeError {
         token: Rc::clone(token),
         message: "Operand must be a number.".to_string(),
-    })
+    }.into())
 }
 
-fn require_number_operands<T>(token: &Rc<Token>) -> Result<T, RuntimeError> {
+fn require_number_operands<T>(token: &Rc<Token>) -> Result<T, InterpretError> {
     Err(RuntimeError {
         token: Rc::clone(token),
         message: "Operand must be a number.".to_string(),
-    })
+    }.into())
 }
