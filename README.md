@@ -45,7 +45,10 @@ parameters -> IDENTIFIER ( "," IDENTIFIER )* ;
 ### Expressions
 
 ```
-expression -> assignement ;
+expression -> funExpr
+            | assignement ;
+
+funExpr -> "fun" "(" parameters? ")" block ;
 
 assignment -> IDENTIFIER "=" assignment
             | logic_or ;

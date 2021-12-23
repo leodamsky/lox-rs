@@ -93,8 +93,8 @@ impl Lox {
     }
 }
 
-struct FunctionStmt {
-    name: Token,
+struct FunctionDecl {
+    name: Option<Token>,
     params: Vec<Token>,
     body: Vec<Stmt>,
 }
@@ -102,7 +102,7 @@ struct FunctionStmt {
 pub(crate) enum Stmt {
     Block(Vec<Stmt>),
     Expression(Expr),
-    Function(Rc<FunctionStmt>),
+    Function(Rc<FunctionDecl>),
     If {
         condition: Expr,
         then_branch: Box<Stmt>,
@@ -124,6 +124,7 @@ pub(crate) enum Stmt {
 }
 
 pub(crate) enum Expr {
+    Function(Rc<FunctionDecl>),
     Assign {
         name: Rc<Token>,
         value: Box<Expr>,

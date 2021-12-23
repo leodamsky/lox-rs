@@ -4,7 +4,7 @@ use std::fmt::{Display, Formatter};
 use std::rc::Rc;
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use crate::{Expr, FunctionStmt, Literal, Stmt, Token, TokenKind};
+use crate::{Expr, FunctionDecl, Literal, Stmt, Token, TokenKind};
 
 pub(crate) enum Value {
     Number(f64),
@@ -192,13 +192,13 @@ impl Interpret<()> for Stmt {
             Stmt::Expression(expr) => {
                 expr.interpret(global, env)?;
             }
-            Stmt::Function(stmt) => {
+            Stmt::Function(decl) => {
                 let function = Function {
-                    declaration: Rc::clone(stmt),
+                    declaration: Rc::clone(decl),
                     closure: Rc::clone(&env),
                 };
                 env.borrow_mut().define(
-                    &stmt.name.lexeme,
+                    &decl.name.as_ref().unwrap().lexeme,
                     Rc::new(RefCell::new(Value::Callable(Box::new(function)))),
                 );
             }
@@ -260,6 +260,13 @@ impl Interpret<Rc<RefCell<Value>>> for Expr {
         env: Rc<RefCell<Environment>>,
     ) -> Result<Rc<RefCell<Value>>, InterpretError> {
         let expr: Rc<RefCell<Value>> = match self {
+            Expr::Function(declaration) => {
+                let function = Function {
+                    declaration: Rc::clone(declaration),
+                    closure: Rc::clone(&env),
+                };
+                Value::Callable(Box::new(function)).into()
+            }
             Expr::Assign { name, value } => {
                 let value = value.interpret(global, Rc::clone(&env))?;
                 env.borrow_mut().assign(name, Rc::clone(&value))?;
@@ -469,13 +476,18 @@ impl Callable for NativeFn {
 }
 
 struct Function {
-    declaration: Rc<FunctionStmt>,
+    declaration: Rc<FunctionDecl>,
     closure: Rc<RefCell<Environment>>,
 }
 
 impl Display for Function {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        write!(f, "<fn {}>", self.declaration.name.lexeme)
+        let function_name = if let Some(token) = &self.declaration.name {
+            token.lexeme.as_str()
+        } else {
+            "anonymous"
+        };
+        write!(f, "<fn {}>", function_name)
     }
 }
 

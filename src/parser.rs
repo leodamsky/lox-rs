@@ -11,7 +11,7 @@ use TokenKind::{
 use crate::TokenKind::{
     And, Comma, Else, Equal, Identifier, LeftBrace, Or, RightBrace, RightParen,
 };
-use crate::{Expr, FunctionStmt, Literal, Lox, Stmt, Token, TokenKind};
+use crate::{Expr, FunctionDecl, Literal, Lox, Stmt, Token, TokenKind};
 
 #[derive(Debug)]
 pub(crate) struct ParseError {}
@@ -47,7 +47,7 @@ impl<'a> Parser<'a> {
 
     fn declaration(&mut self) -> Result<Stmt, ParseError> {
         let result = if self.try_consume(&Fun).is_some() {
-            self.function("function")
+            self.named_function("function")
         } else if self.try_consume(&Var).is_some() {
             self.var_declaration()
         } else {
@@ -61,8 +61,13 @@ impl<'a> Parser<'a> {
         result
     }
 
-    fn function(&mut self, kind: &str) -> Result<Stmt, ParseError> {
+    fn named_function(&mut self, kind: &str) -> Result<Stmt, ParseError> {
         let name = self.consume(&Identifier, format!("Expect {} name.", kind))?;
+        let declaration = self.function(kind, Some(name))?;
+        Ok(Stmt::Function(Rc::new(declaration)))
+    }
+
+    fn function(&mut self, kind: &str, name: Option<Token>) -> Result<FunctionDecl, ParseError> {
         self.consume(&LeftParen, format!("Expect '(' after {} name.", kind))?;
         let mut parameters = vec![];
         if !self.check(&RightParen) {
@@ -87,11 +92,11 @@ impl<'a> Parser<'a> {
         self.consume(&LeftBrace, format!("Expect '{{' before {} body.", kind))?;
         let body = self.block()?;
 
-        Ok(Stmt::Function(Rc::new(FunctionStmt {
+        Ok(FunctionDecl {
             name,
             params: parameters,
-            body,
-        })))
+            body
+        })
     }
 
     fn var_declaration(&mut self) -> Result<Stmt, ParseError> {
@@ -230,7 +235,12 @@ impl<'a> Parser<'a> {
     }
 
     fn expression(&mut self) -> Result<Expr, ParseError> {
-        self.assignment()
+        if self.try_consume(&Fun).is_some() {
+            let declaration = self.function("anonymous function", None)?;
+            Ok(Expr::Function(Rc::new(declaration)))
+        } else {
+            self.assignment()
+        }
     }
 
     fn assignment(&mut self) -> Result<Expr, ParseError> {
