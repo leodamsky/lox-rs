@@ -1,8 +1,8 @@
-use crate::interpreter::{Interpreter, RuntimeError};
 use std::fmt::{Display, Formatter};
 use std::fs;
 use std::rc::Rc;
 
+use crate::interpreter::{Interpreter, RuntimeError};
 use crate::parser::Parser;
 use crate::scanner::Scanner;
 
@@ -87,9 +87,16 @@ impl Lox {
     }
 }
 
+struct FunctionStmt {
+    name: Token,
+    params: Vec<Token>,
+    body: Vec<Stmt>,
+}
+
 pub(crate) enum Stmt {
     Block(Vec<Stmt>),
     Expression(Expr),
+    Function(Rc<FunctionStmt>),
     If {
         condition: Expr,
         then_branch: Box<Stmt>,
@@ -115,6 +122,11 @@ pub(crate) enum Expr {
         left: Box<Expr>,
         operator: Rc<Token>,
         right: Box<Expr>,
+    },
+    Call {
+        callee: Box<Expr>,
+        paren: Rc<Token>,
+        arguments: Vec<Expr>,
     },
     Grouping(Box<Expr>),
     Literal(Literal),

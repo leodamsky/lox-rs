@@ -1,4 +1,5 @@
 use std::iter::Peekable;
+use std::rc::Rc;
 use std::vec::IntoIter;
 
 use TokenKind::{
@@ -7,8 +8,10 @@ use TokenKind::{
     While, EOF,
 };
 
-use crate::TokenKind::{And, Else, Equal, Identifier, LeftBrace, Or, RightBrace, RightParen};
-use crate::{Expr, Literal, Lox, Stmt, Token, TokenKind};
+use crate::TokenKind::{
+    And, Comma, Else, Equal, Identifier, LeftBrace, Or, RightBrace, RightParen,
+};
+use crate::{Expr, FunctionStmt, Literal, Lox, Stmt, Token, TokenKind};
 
 #[derive(Debug)]
 pub(crate) struct ParseError {}
@@ -43,7 +46,9 @@ impl<'a> Parser<'a> {
     }
 
     fn declaration(&mut self) -> Result<Stmt, ParseError> {
-        let result = if self.try_consume(&Var).is_some() {
+        let result = if self.try_consume(&Fun).is_some() {
+            self.function("function")
+        } else if self.try_consume(&Var).is_some() {
             self.var_declaration()
         } else {
             self.statement()
@@ -54,6 +59,39 @@ impl<'a> Parser<'a> {
         }
 
         result
+    }
+
+    fn function(&mut self, kind: &str) -> Result<Stmt, ParseError> {
+        let name = self.consume(&Identifier, format!("Expect {} name.", kind))?;
+        self.consume(&LeftParen, format!("Expect '(' after {} name.", kind))?;
+        let mut parameters = vec![];
+        if !self.check(&RightParen) {
+            loop {
+                parameters.push(self.consume(&Identifier, "Expect parameter name.")?);
+                if parameters.len() > 255 {
+                    let token = self.tokens.peek().unwrap();
+                    self.lox
+                        .syntax_error(token, "Can't have more than 255 parameters.");
+                }
+
+                if self.try_consume(&Comma).is_none() {
+                    break;
+                }
+            }
+        }
+        self.consume(
+            &RightParen,
+            format!("Expect ')' after {} parameters.", kind),
+        )?;
+
+        self.consume(&LeftBrace, format!("Expect '{{' before {} body.", kind))?;
+        let body = self.block()?;
+
+        Ok(Stmt::Function(Rc::new(FunctionStmt {
+            name,
+            params: parameters,
+            body,
+        })))
     }
 
     fn var_declaration(&mut self) -> Result<Stmt, ParseError> {
@@ -256,8 +294,49 @@ impl<'a> Parser<'a> {
                 right: right.into(),
             })
         } else {
-            self.primary()
+            self.call()
         }
+    }
+
+    fn call(&mut self) -> Result<Expr, ParseError> {
+        let mut expr = self.primary()?;
+
+        loop {
+            if self.try_consume(&LeftParen).is_some() {
+                expr = self.finish_call(expr)?;
+            } else {
+                break;
+            }
+        }
+
+        Ok(expr)
+    }
+
+    fn finish_call(&mut self, expr: Expr) -> Result<Expr, ParseError> {
+        let mut arguments = vec![];
+
+        if !self.check(&RightParen) {
+            loop {
+                arguments.push(self.expression()?);
+                if self.try_consume(&Comma).is_none() {
+                    break;
+                }
+            }
+        }
+
+        if arguments.len() > 255 {
+            let token = self.tokens.peek().unwrap();
+            self.lox
+                .syntax_error(token, "Can't have more than 255 arguments.");
+        }
+
+        let paren = self.consume(&RightParen, "Expect ')' after function arguments.")?;
+
+        Ok(Expr::Call {
+            callee: expr.into(),
+            paren: paren.into(),
+            arguments,
+        })
     }
 
     fn primary(&mut self) -> Result<Expr, ParseError> {

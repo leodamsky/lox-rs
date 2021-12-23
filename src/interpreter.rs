@@ -2,15 +2,16 @@ use std::cell::RefCell;
 use std::collections::HashMap;
 use std::fmt::{Display, Formatter};
 use std::rc::Rc;
+use std::time::{SystemTime, UNIX_EPOCH};
 
-use crate::{Expr, Literal, Stmt, Token, TokenKind};
+use crate::{Expr, FunctionStmt, Literal, Stmt, Token, TokenKind};
 
-#[derive(Debug)]
-pub(crate) enum Value {
+enum Value {
     Number(f64),
     String(Rc<String>),
     Boolean(bool),
     Nil,
+    Callable(Box<dyn Callable>),
 }
 
 impl Display for Value {
@@ -27,6 +28,7 @@ impl Display for Value {
             Value::String(s) => Display::fmt(s, f),
             Value::Boolean(b) => Display::fmt(b, f),
             Value::Nil => write!(f, "nil"),
+            Value::Callable(call) => Display::fmt(call, f),
         }
     }
 }
@@ -59,22 +61,45 @@ pub(crate) struct Interpreter {
 }
 
 impl Interpreter {
-    pub(crate) fn interpret(&mut self, statements: Vec<Stmt>) -> Result<(), RuntimeError> {
+    pub(crate) fn interpret(&self, statements: Vec<Stmt>) -> Result<(), RuntimeError> {
         for statement in statements {
-            statement.interpret(Rc::clone(&self.environment))?;
+            statement.interpret(Rc::clone(&self.environment), Rc::clone(&self.environment))?;
         }
         Ok(())
     }
 }
 
-#[derive(Default)]
 struct Environment {
-    values: HashMap<Rc<String>, Rc<RefCell<Value>>>,
     enclosing: Option<Rc<RefCell<Environment>>>,
+    values: HashMap<Rc<String>, Rc<RefCell<Value>>>,
 }
 
 impl Environment {
-    pub(crate) fn child(enclosing: Rc<RefCell<Environment>>) -> Environment {
+    fn global() -> Environment {
+        let mut values = HashMap::new();
+
+        values.insert(
+            "clock".to_string().into(),
+            Value::Callable(Box::new(NativeFn {
+                arity: 0,
+                function: Box::new(|_, _| {
+                    let time_millis = SystemTime::now()
+                        .duration_since(UNIX_EPOCH)
+                        .expect("Time went backwards.")
+                        .as_millis();
+                    Ok(Value::Number(time_millis as f64))
+                }),
+            }))
+            .into(),
+        );
+
+        Environment {
+            enclosing: None,
+            values,
+        }
+    }
+
+    fn child(enclosing: Rc<RefCell<Environment>>) -> Environment {
         Environment {
             values: HashMap::new(),
             enclosing: Some(enclosing),
@@ -113,19 +138,34 @@ impl Environment {
     }
 }
 
+impl Default for Environment {
+    fn default() -> Self {
+        Environment::global()
+    }
+}
+
 trait Interpret<T> {
     // TODO: can it be refactor to &mut Environment ?
-    fn interpret(&self, env: Rc<RefCell<Environment>>) -> Result<T, RuntimeError>;
+    fn interpret(
+        &self,
+        global: Rc<RefCell<Environment>>,
+        env: Rc<RefCell<Environment>>,
+    ) -> Result<T, RuntimeError>;
 }
 
 impl Interpret<()> for Stmt {
-    fn interpret(&self, env: Rc<RefCell<Environment>>) -> Result<(), RuntimeError> {
+    fn interpret(
+        &self,
+        global: Rc<RefCell<Environment>>,
+        env: Rc<RefCell<Environment>>,
+    ) -> Result<(), RuntimeError> {
         fn execute_block(
             statements: &Vec<Stmt>,
+            global: Rc<RefCell<Environment>>,
             env: Rc<RefCell<Environment>>,
         ) -> Result<(), RuntimeError> {
             for statement in statements {
-                statement.interpret(Rc::clone(&env))?;
+                statement.interpret(Rc::clone(&global), Rc::clone(&env))?;
             }
             Ok(())
         }
@@ -133,34 +173,51 @@ impl Interpret<()> for Stmt {
         match self {
             Stmt::Block(statements) => {
                 let enclosing = Rc::new(RefCell::new(Environment::child(env)));
-                execute_block(statements, enclosing)?;
+                execute_block(statements, global, enclosing)?;
             }
             Stmt::Expression(expr) => {
-                expr.interpret(env)?;
+                expr.interpret(global, env)?;
+            }
+            Stmt::Function(stmt) => {
+                let function = Function {
+                    declaration: Rc::clone(stmt),
+                };
+                env.borrow_mut().define(
+                    &stmt.name.lexeme,
+                    Rc::new(RefCell::new(Value::Callable(Box::new(function)))),
+                );
             }
             Stmt::If {
                 condition,
                 then_branch,
                 else_branch,
             } => {
-                if is_truthy(&condition.interpret(Rc::clone(&env))?.borrow()) {
-                    then_branch.interpret(env)?
+                if is_truthy(
+                    &condition
+                        .interpret(Rc::clone(&global), Rc::clone(&env))?
+                        .borrow(),
+                ) {
+                    then_branch.interpret(global, env)?
                 } else if let Some(else_branch) = else_branch {
-                    else_branch.interpret(env)?
+                    else_branch.interpret(global, env)?
                 }
             }
             Stmt::Print(expr) => {
-                let value = expr.interpret(env)?;
+                let value = expr.interpret(global, env)?;
                 println!("{}", value.borrow());
             }
             Stmt::While { condition, body } => {
-                while is_truthy(&condition.interpret(Rc::clone(&env))?.borrow()) {
-                    body.interpret(Rc::clone(&env))?;
+                while is_truthy(
+                    &condition
+                        .interpret(Rc::clone(&global), Rc::clone(&env))?
+                        .borrow(),
+                ) {
+                    body.interpret(Rc::clone(&global), Rc::clone(&env))?;
                 }
             }
             Stmt::Var { name, initializer } => {
                 let value = if let Some(initializer) = initializer {
-                    initializer.interpret(Rc::clone(&env))?
+                    initializer.interpret(global, Rc::clone(&env))?
                 } else {
                     Value::Nil.into()
                 };
@@ -173,10 +230,14 @@ impl Interpret<()> for Stmt {
 }
 
 impl Interpret<Rc<RefCell<Value>>> for Expr {
-    fn interpret(&self, env: Rc<RefCell<Environment>>) -> Result<Rc<RefCell<Value>>, RuntimeError> {
+    fn interpret(
+        &self,
+        global: Rc<RefCell<Environment>>,
+        env: Rc<RefCell<Environment>>,
+    ) -> Result<Rc<RefCell<Value>>, RuntimeError> {
         let expr: Rc<RefCell<Value>> = match self {
             Expr::Assign { name, value } => {
-                let value = value.interpret(Rc::clone(&env))?;
+                let value = value.interpret(global, Rc::clone(&env))?;
                 env.borrow_mut().assign(name, Rc::clone(&value))?;
                 value
             }
@@ -185,8 +246,8 @@ impl Interpret<Rc<RefCell<Value>>> for Expr {
                 operator,
                 right,
             } => {
-                let left = left.interpret(Rc::clone(&env))?;
-                let right = right.interpret(env)?;
+                let left = left.interpret(Rc::clone(&global), Rc::clone(&env))?;
+                let right = right.interpret(global, env)?;
 
                 match operator.kind {
                     TokenKind::Minus => match (&*left.borrow(), &*right.borrow()) {
@@ -259,14 +320,49 @@ impl Interpret<Rc<RefCell<Value>>> for Expr {
                     }
                 }
             }
-            Expr::Grouping(expr) => expr.interpret(env)?,
+            Expr::Call {
+                callee,
+                paren,
+                arguments,
+            } => {
+                let callee = callee.interpret(Rc::clone(&global), Rc::clone(&env))?;
+
+                let mut args = vec![];
+                for argument in arguments {
+                    args.push(argument.interpret(Rc::clone(&global), Rc::clone(&env))?);
+                }
+
+                let result = match &*callee.borrow() {
+                    Value::Callable(callable) => {
+                        if args.len() != callable.arity() {
+                            return Err(RuntimeError {
+                                message: format!(
+                                    "Expected {} arguments but got {}.",
+                                    callable.arity(),
+                                    args.len()
+                                ),
+                                token: Rc::clone(paren),
+                            });
+                        }
+                        callable.call(global, env, args)?.into()
+                    }
+                    _ => {
+                        return Err(RuntimeError {
+                            message: "Can only call functions and classes.".to_string(),
+                            token: Rc::clone(paren),
+                        });
+                    }
+                };
+                result
+            }
+            Expr::Grouping(expr) => expr.interpret(global, env)?,
             Expr::Literal(literal) => Value::from(literal).into(),
             Expr::Logical {
                 left,
                 operator,
                 right,
             } => {
-                let left = left.interpret(Rc::clone(&env))?;
+                let left = left.interpret(Rc::clone(&global), Rc::clone(&env))?;
                 if let TokenKind::Or = operator.kind {
                     if is_truthy(&left.borrow()) {
                         return Ok(left);
@@ -276,10 +372,10 @@ impl Interpret<Rc<RefCell<Value>>> for Expr {
                         return Ok(left);
                     }
                 }
-                right.interpret(env)?
+                right.interpret(global, env)?
             }
             Expr::Unary { operator, right } => {
-                let right = right.interpret(env)?;
+                let right = right.interpret(global, env)?;
 
                 match operator.kind {
                     TokenKind::Bang => Value::Boolean(!is_truthy(&right.borrow())).into(),
@@ -301,6 +397,80 @@ impl Interpret<Rc<RefCell<Value>>> for Expr {
             Expr::Variable { name } => env.borrow().get(name)?,
         };
         Ok(expr)
+    }
+}
+
+trait Callable: Display {
+    fn arity(&self) -> usize;
+
+    fn call(
+        &self,
+        global: Rc<RefCell<Environment>>,
+        env: Rc<RefCell<Environment>>,
+        arguments: Vec<Rc<RefCell<Value>>>,
+    ) -> Result<Value, RuntimeError>;
+}
+
+struct NativeFn {
+    arity: usize,
+    function: Box<
+        dyn Fn(Rc<RefCell<Environment>>, Vec<Rc<RefCell<Value>>>) -> Result<Value, RuntimeError>,
+    >,
+}
+
+impl Display for NativeFn {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        write!(f, "<native fn>")
+    }
+}
+
+impl Callable for NativeFn {
+    fn arity(&self) -> usize {
+        self.arity
+    }
+
+    fn call(
+        &self,
+        _: Rc<RefCell<Environment>>,
+        global: Rc<RefCell<Environment>>,
+        arguments: Vec<Rc<RefCell<Value>>>,
+    ) -> Result<Value, RuntimeError> {
+        let env = Rc::new(RefCell::new(Environment::child(global)));
+        (self.function)(env, arguments)
+    }
+}
+
+struct Function {
+    declaration: Rc<FunctionStmt>,
+}
+
+impl Display for Function {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        write!(f, "<fn {}>", self.declaration.name.lexeme)
+    }
+}
+
+impl Callable for Function {
+    fn arity(&self) -> usize {
+        self.declaration.params.len()
+    }
+
+    fn call(
+        &self,
+        global: Rc<RefCell<Environment>>,
+        _: Rc<RefCell<Environment>>,
+        arguments: Vec<Rc<RefCell<Value>>>,
+    ) -> Result<Value, RuntimeError> {
+        let env = Rc::new(RefCell::new(Environment::child(Rc::clone(&global))));
+        for i in 0..self.declaration.params.len() {
+            let name = &self.declaration.params[i].lexeme;
+            let value = Rc::clone(&arguments[i]);
+            env.borrow_mut().define(name, value);
+        }
+        for statement in self.declaration.body.iter() {
+            statement.interpret(Rc::clone(&global), Rc::clone(&env))?;
+        }
+        Ok(Value::Nil)
     }
 }
 

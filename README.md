@@ -7,15 +7,19 @@
 ```
 program -> declaration* EOF ;
 
-declaration -> varDecl
+declaration -> funDecl
+             | varDecl
              | statement ;
+
+funDecl -> "fun" function ;
 
 statement -> exprStmt
            | forStmt
            | ifStmt
            | printStmt
            | whileStmt
-           | block ;
+           | block
+           | function;
 
 exprStmt -> expression ";" ;
 
@@ -29,6 +33,10 @@ printStmt -> "print" expression ";" ;
 whileStmt -> "while" "(" expression ")" statement ;
 
 block -> "{" declaration* "}" ;
+
+function -> INDENTIFIER "(" parameters? ")" block ;
+
+parameters -> IDENTIFIER ( "," IDENTIFIER )* ;
 ```
 
 ### Expressions
@@ -52,7 +60,11 @@ term -> factor ( ( "-" | "+" ) factor )* ;
 factor -> unary ( ( "/" | "*" ) unary )* ;
 
 unary -> ( "!" | "-" ) unary
-       | primary ;
+       | call ;
+
+call -> primary ( "(" arguments? ")" )* ;
+
+arguments -> expression ( "," expression )* ;
 
 primary -> NUMBER
          | STRING
