@@ -195,6 +195,7 @@ impl Interpret<()> for Stmt {
             Stmt::Function(stmt) => {
                 let function = Function {
                     declaration: Rc::clone(stmt),
+                    closure: Rc::clone(&env),
                 };
                 env.borrow_mut().define(
                     &stmt.name.lexeme,
@@ -469,6 +470,7 @@ impl Callable for NativeFn {
 
 struct Function {
     declaration: Rc<FunctionStmt>,
+    closure: Rc<RefCell<Environment>>,
 }
 
 impl Display for Function {
@@ -488,7 +490,7 @@ impl Callable for Function {
         _: Rc<RefCell<Environment>>,
         arguments: Vec<Rc<RefCell<Value>>>,
     ) -> Result<Value, InterpretError> {
-        let env = Rc::new(RefCell::new(Environment::child(Rc::clone(&global))));
+        let env = Rc::new(RefCell::new(Environment::child(Rc::clone(&self.closure))));
         for i in 0..self.declaration.params.len() {
             let name = &self.declaration.params[i].lexeme;
             let value = Rc::clone(&arguments[i]);
