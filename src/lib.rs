@@ -4,16 +4,20 @@ use std::rc::Rc;
 
 use crate::interpreter::{InterpretError, Interpreter};
 use crate::parser::Parser;
+use crate::resolver::{Binding, Resolve};
 use crate::scanner::Scanner;
 
+mod id;
 mod interpreter;
 mod parser;
+mod resolver;
 mod scanner;
 
 pub struct Lox {
     had_error: bool,
     had_runtime_error: bool,
     interpreter: Interpreter,
+    pub(crate) binding: Binding,
 }
 
 impl Lox {
@@ -22,6 +26,7 @@ impl Lox {
             had_error: false,
             had_runtime_error: false,
             interpreter: Interpreter::default(),
+            binding: Binding::default(),
         }
     }
 
@@ -42,8 +47,23 @@ impl Lox {
         }
 
         let statements = statements.expect("Expected statements cause had no error.");
-        if let Err(e) = self.interpreter.interpret(statements) {
+
+        self.update_binding(&statements);
+        // resolver could detect errors too
+        // for example, it can detect usage of an uninitialized variable
+        if self.had_error() {
+            return;
+        }
+
+        if let Err(e) = self.interpreter.interpret(statements, &self.binding) {
             self.runtime_error(e);
+        }
+    }
+
+    fn update_binding(&mut self, statements: &Vec<Stmt>) {
+        let mut ctx = resolver::Context::new(self);
+        for statement in statements {
+            statement.resolve(&mut ctx);
         }
     }
 
@@ -123,11 +143,38 @@ pub(crate) enum Stmt {
     },
 }
 
+struct AssignExpr {
+    id: usize,
+    name: Rc<Token>,
+    value: Box<Expr>,
+}
+
+impl AssignExpr {
+    fn new(name: Rc<Token>, value: Box<Expr>) -> AssignExpr {
+        AssignExpr {
+            id: id::next_id(),
+            name,
+            value,
+        }
+    }
+}
+
+struct VariableExpr {
+    id: usize,
+    name: Rc<Token>,
+}
+
+impl VariableExpr {
+    fn new(name: Rc<Token>) -> VariableExpr {
+        VariableExpr {
+            id: id::next_id(),
+            name,
+        }
+    }
+}
+
 pub(crate) enum Expr {
-    Assign {
-        name: Rc<Token>,
-        value: Box<Expr>,
-    },
+    Assign(AssignExpr),
     Binary {
         left: Box<Expr>,
         operator: Rc<Token>,
@@ -149,9 +196,7 @@ pub(crate) enum Expr {
         operator: Rc<Token>,
         right: Box<Expr>,
     },
-    Variable {
-        name: Rc<Token>,
-    },
+    Variable(VariableExpr),
 }
 
 #[derive(Clone)]

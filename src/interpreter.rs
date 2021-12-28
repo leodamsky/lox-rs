@@ -4,7 +4,8 @@ use std::fmt::{Display, Formatter};
 use std::rc::Rc;
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use crate::{Expr, FunctionStmt, Literal, Stmt, Token, TokenKind};
+use crate::resolver::Binding;
+use crate::{AssignExpr, Expr, FunctionStmt, Literal, Stmt, Token, TokenKind, VariableExpr};
 
 pub(crate) enum Value {
     Number(f64),
@@ -75,9 +76,17 @@ pub(crate) struct Interpreter {
 }
 
 impl Interpreter {
-    pub(crate) fn interpret(&self, statements: Vec<Stmt>) -> Result<(), InterpretError> {
+    pub(crate) fn interpret(
+        &self,
+        statements: Vec<Stmt>,
+        binding: &Binding,
+    ) -> Result<(), InterpretError> {
         for statement in statements {
-            statement.interpret(Rc::clone(&self.environment), Rc::clone(&self.environment))?;
+            statement.interpret(
+                Rc::clone(&self.environment),
+                Rc::clone(&self.environment),
+                &binding,
+            )?;
         }
         Ok(())
     }
@@ -124,6 +133,30 @@ impl Environment {
         self.values.insert(Rc::clone(name), value);
     }
 
+    fn ancestor(&self, distance: usize) -> Option<Rc<RefCell<Environment>>> {
+        if distance == 0 {
+            return None;
+        }
+        let mut environment = Rc::clone(self.enclosing.as_ref().unwrap());
+        for _ in 0..(distance - 1) {
+            let next = Rc::clone(environment.borrow().enclosing.as_ref().unwrap());
+            environment = next;
+        }
+        Some(environment)
+    }
+
+    fn get_at(
+        &self,
+        distance: usize,
+        name: &Rc<Token>,
+    ) -> Result<Rc<RefCell<Value>>, RuntimeError> {
+        if let Some(env) = self.ancestor(distance) {
+            env.borrow().get(&name)
+        } else {
+            self.get(&name)
+        }
+    }
+
     fn get(&self, name: &Rc<Token>) -> Result<Rc<RefCell<Value>>, RuntimeError> {
         if let Some(value) = self.values.get(&name.lexeme) {
             return Ok(Rc::clone(value));
@@ -135,6 +168,19 @@ impl Environment {
             message: format!("Undefined variable '{}'.", name.lexeme),
             token: Rc::clone(name),
         })
+    }
+
+    fn assign_at(
+        &mut self,
+        distance: usize,
+        name: &Rc<Token>,
+        value: Rc<RefCell<Value>>,
+    ) -> Result<(), RuntimeError> {
+        if let Some(env) = self.ancestor(distance) {
+            env.borrow_mut().assign(name, value)
+        } else {
+            self.assign(name, value)
+        }
     }
 
     fn assign(&mut self, name: &Rc<Token>, value: Rc<RefCell<Value>>) -> Result<(), RuntimeError> {
@@ -164,6 +210,7 @@ trait Interpret<T> {
         &self,
         global: Rc<RefCell<Environment>>,
         env: Rc<RefCell<Environment>>,
+        binding: &Binding,
     ) -> Result<T, InterpretError>;
 }
 
@@ -172,14 +219,16 @@ impl Interpret<()> for Stmt {
         &self,
         global: Rc<RefCell<Environment>>,
         env: Rc<RefCell<Environment>>,
+        binding: &Binding,
     ) -> Result<(), InterpretError> {
         fn execute_block(
             statements: &Vec<Stmt>,
             global: Rc<RefCell<Environment>>,
             env: Rc<RefCell<Environment>>,
+            binding: &Binding,
         ) -> Result<(), InterpretError> {
             for statement in statements {
-                statement.interpret(Rc::clone(&global), Rc::clone(&env))?;
+                statement.interpret(Rc::clone(&global), Rc::clone(&env), binding)?;
             }
             Ok(())
         }
@@ -187,10 +236,10 @@ impl Interpret<()> for Stmt {
         match self {
             Stmt::Block(statements) => {
                 let enclosing = Rc::new(RefCell::new(Environment::child(env)));
-                execute_block(statements, global, enclosing)?;
+                execute_block(statements, global, enclosing, binding)?;
             }
             Stmt::Expression(expr) => {
-                expr.interpret(global, env)?;
+                expr.interpret(global, env, binding)?;
             }
             Stmt::Function(stmt) => {
                 let function = Function {
@@ -209,39 +258,42 @@ impl Interpret<()> for Stmt {
             } => {
                 if is_truthy(
                     &condition
-                        .interpret(Rc::clone(&global), Rc::clone(&env))?
+                        .interpret(Rc::clone(&global), Rc::clone(&env), binding)?
                         .borrow(),
                 ) {
-                    then_branch.interpret(global, env)?
+                    then_branch.interpret(global, env, binding)?
                 } else if let Some(else_branch) = else_branch {
-                    else_branch.interpret(global, env)?
+                    else_branch.interpret(global, env, binding)?
                 }
             }
             Stmt::Print(expr) => {
-                let value = expr.interpret(global, env)?;
+                let value = expr.interpret(global, env, binding)?;
                 println!("{}", value.borrow());
             }
             Stmt::Return { keyword, value } => {
                 let value = if let Some(expr) = value {
-                    expr.interpret(global, env)?
+                    expr.interpret(global, env, binding)?
                 } else {
                     Value::Nil.into()
                 };
 
-                return Err(InterpretError::Return { value, token: Rc::clone(keyword) });
+                return Err(InterpretError::Return {
+                    value,
+                    token: Rc::clone(keyword),
+                });
             }
             Stmt::While { condition, body } => {
                 while is_truthy(
                     &condition
-                        .interpret(Rc::clone(&global), Rc::clone(&env))?
+                        .interpret(Rc::clone(&global), Rc::clone(&env), binding)?
                         .borrow(),
                 ) {
-                    body.interpret(Rc::clone(&global), Rc::clone(&env))?;
+                    body.interpret(Rc::clone(&global), Rc::clone(&env), binding)?;
                 }
             }
             Stmt::Var { name, initializer } => {
                 let value = if let Some(initializer) = initializer {
-                    initializer.interpret(global, Rc::clone(&env))?
+                    initializer.interpret(global, Rc::clone(&env), binding)?
                 } else {
                     Value::Nil.into()
                 };
@@ -258,11 +310,31 @@ impl Interpret<Rc<RefCell<Value>>> for Expr {
         &self,
         global: Rc<RefCell<Environment>>,
         env: Rc<RefCell<Environment>>,
+        binding: &Binding,
     ) -> Result<Rc<RefCell<Value>>, InterpretError> {
+        fn look_up_variable(
+            global: &Environment,
+            env: &Environment,
+            binding: &Binding,
+            name: &Rc<Token>,
+            id: usize,
+        ) -> Result<Rc<RefCell<Value>>, RuntimeError> {
+            let distance = binding.resolve(id);
+            if let Some(distance) = distance {
+                env.get_at(distance, name)
+            } else {
+                global.get(name)
+            }
+        }
         let expr: Rc<RefCell<Value>> = match self {
-            Expr::Assign { name, value } => {
-                let value = value.interpret(global, Rc::clone(&env))?;
-                env.borrow_mut().assign(name, Rc::clone(&value))?;
+            Expr::Assign(AssignExpr { id, name, value }) => {
+                let value = value.interpret(Rc::clone(&env), Rc::clone(&env), binding)?;
+                if let Some(distance) = binding.resolve(*id) {
+                    env.borrow_mut()
+                        .assign_at(distance, name, Rc::clone(&value))?;
+                } else {
+                    global.borrow_mut().assign(name, Rc::clone(&value))?;
+                }
                 value
             }
             Expr::Binary {
@@ -270,8 +342,8 @@ impl Interpret<Rc<RefCell<Value>>> for Expr {
                 operator,
                 right,
             } => {
-                let left = left.interpret(Rc::clone(&global), Rc::clone(&env))?;
-                let right = right.interpret(global, env)?;
+                let left = left.interpret(Rc::clone(&global), Rc::clone(&env), binding)?;
+                let right = right.interpret(global, env, binding)?;
 
                 match operator.kind {
                     TokenKind::Minus => match (&*left.borrow(), &*right.borrow()) {
@@ -303,7 +375,8 @@ impl Interpret<Rc<RefCell<Value>>> for Expr {
                             return Err(RuntimeError {
                                 token: Rc::clone(operator),
                                 message: "Operands must be two numbers or two string.".to_string(),
-                            }.into())
+                            }
+                            .into())
                         }
                     },
                     TokenKind::GreaterEqual => match (&*left.borrow(), &*right.borrow()) {
@@ -340,7 +413,8 @@ impl Interpret<Rc<RefCell<Value>>> for Expr {
                         return Err(RuntimeError {
                             message: format!("Not supported binary operator: {}", operator.lexeme),
                             token: Rc::clone(operator),
-                        }.into())
+                        }
+                        .into())
                     }
                 }
             }
@@ -349,11 +423,11 @@ impl Interpret<Rc<RefCell<Value>>> for Expr {
                 paren,
                 arguments,
             } => {
-                let callee = callee.interpret(Rc::clone(&global), Rc::clone(&env))?;
+                let callee = callee.interpret(Rc::clone(&global), Rc::clone(&env), binding)?;
 
                 let mut args = vec![];
                 for argument in arguments {
-                    args.push(argument.interpret(Rc::clone(&global), Rc::clone(&env))?);
+                    args.push(argument.interpret(Rc::clone(&global), Rc::clone(&env), binding)?);
                 }
 
                 let result = match &*callee.borrow() {
@@ -366,9 +440,10 @@ impl Interpret<Rc<RefCell<Value>>> for Expr {
                                     args.len()
                                 ),
                                 token: Rc::clone(paren),
-                            }.into());
+                            }
+                            .into());
                         }
-                        match callable.call(global, env, args) {
+                        match callable.call(global, env, binding, args) {
                             Ok(value) => value.into(),
                             Err(InterpretError::Return { value, .. }) => value,
                             Err(e) => return Err(e),
@@ -378,19 +453,20 @@ impl Interpret<Rc<RefCell<Value>>> for Expr {
                         return Err(RuntimeError {
                             message: "Can only call functions and classes.".to_string(),
                             token: Rc::clone(paren),
-                        }.into());
+                        }
+                        .into());
                     }
                 };
                 result
             }
-            Expr::Grouping(expr) => expr.interpret(global, env)?,
+            Expr::Grouping(expr) => expr.interpret(global, env, binding)?,
             Expr::Literal(literal) => Value::from(literal).into(),
             Expr::Logical {
                 left,
                 operator,
                 right,
             } => {
-                let left = left.interpret(Rc::clone(&global), Rc::clone(&env))?;
+                let left = left.interpret(Rc::clone(&global), Rc::clone(&env), binding)?;
                 if let TokenKind::Or = operator.kind {
                     if is_truthy(&left.borrow()) {
                         return Ok(left);
@@ -400,10 +476,10 @@ impl Interpret<Rc<RefCell<Value>>> for Expr {
                         return Ok(left);
                     }
                 }
-                right.interpret(global, env)?
+                right.interpret(global, env, binding)?
             }
             Expr::Unary { operator, right } => {
-                let right = right.interpret(global, env)?;
+                let right = right.interpret(global, env, binding)?;
 
                 match operator.kind {
                     TokenKind::Bang => Value::Boolean(!is_truthy(&right.borrow())).into(),
@@ -418,11 +494,14 @@ impl Interpret<Rc<RefCell<Value>>> for Expr {
                         return Err(RuntimeError {
                             message: format!("Unsupported unary operator: {}", operator.lexeme),
                             token: Rc::clone(operator),
-                        }.into())
+                        }
+                        .into())
                     }
                 }
             }
-            Expr::Variable { name } => env.borrow().get(name)?,
+            Expr::Variable(VariableExpr { id, name }) => {
+                look_up_variable(&global.borrow(), &env.borrow(), binding, name, *id)?
+            }
         };
         Ok(expr)
     }
@@ -435,6 +514,7 @@ pub(crate) trait Callable: Display {
         &self,
         global: Rc<RefCell<Environment>>,
         env: Rc<RefCell<Environment>>,
+        binding: &Binding,
         arguments: Vec<Rc<RefCell<Value>>>,
     ) -> Result<Value, InterpretError>;
 }
@@ -461,6 +541,7 @@ impl Callable for NativeFn {
         &self,
         _: Rc<RefCell<Environment>>,
         global: Rc<RefCell<Environment>>,
+        _: &Binding,
         arguments: Vec<Rc<RefCell<Value>>>,
     ) -> Result<Value, InterpretError> {
         let env = Rc::new(RefCell::new(Environment::child(global)));
@@ -488,6 +569,7 @@ impl Callable for Function {
         &self,
         global: Rc<RefCell<Environment>>,
         _: Rc<RefCell<Environment>>,
+        binding: &Binding,
         arguments: Vec<Rc<RefCell<Value>>>,
     ) -> Result<Value, InterpretError> {
         let env = Rc::new(RefCell::new(Environment::child(Rc::clone(&self.closure))));
@@ -497,7 +579,7 @@ impl Callable for Function {
             env.borrow_mut().define(name, value);
         }
         for statement in self.declaration.body.iter() {
-            statement.interpret(Rc::clone(&global), Rc::clone(&env))?;
+            statement.interpret(Rc::clone(&global), Rc::clone(&env), binding)?;
         }
         Ok(Value::Nil)
     }
@@ -525,12 +607,14 @@ fn require_number_operand<T>(token: &Rc<Token>) -> Result<T, InterpretError> {
     Err(RuntimeError {
         token: Rc::clone(token),
         message: "Operand must be a number.".to_string(),
-    }.into())
+    }
+    .into())
 }
 
 fn require_number_operands<T>(token: &Rc<Token>) -> Result<T, InterpretError> {
     Err(RuntimeError {
         token: Rc::clone(token),
         message: "Operand must be a number.".to_string(),
-    }.into())
+    }
+    .into())
 }

@@ -11,7 +11,7 @@ use TokenKind::{
 use crate::TokenKind::{
     And, Comma, Else, Equal, Identifier, LeftBrace, Or, RightBrace, RightParen,
 };
-use crate::{Expr, FunctionStmt, Literal, Lox, Stmt, Token, TokenKind};
+use crate::{AssignExpr, Expr, FunctionStmt, Literal, Lox, Stmt, Token, TokenKind, VariableExpr};
 
 #[derive(Debug)]
 pub(crate) struct ParseError {}
@@ -198,7 +198,10 @@ impl<'a> Parser<'a> {
             None
         };
         self.consume(&Semicolon, "Expect ';' after expression.")?;
-        Ok(Stmt::Return { keyword: Rc::new(keyword), value })
+        Ok(Stmt::Return {
+            keyword: Rc::new(keyword),
+            value,
+        })
     }
 
     fn expression_statement(&mut self) -> Result<Stmt, ParseError> {
@@ -239,11 +242,8 @@ impl<'a> Parser<'a> {
         if let Some(equals) = self.try_consume(&Equal) {
             let value = self.assignment()?;
 
-            if let Expr::Variable { name } = expr {
-                return Ok(Expr::Assign {
-                    name,
-                    value: value.into(),
-                });
+            if let Expr::Variable(VariableExpr { name, .. }) = expr {
+                return Ok(Expr::Assign(AssignExpr::new(name, value.into())));
             }
 
             self.error(&equals, "Invalid assignment target.");
@@ -374,9 +374,7 @@ impl<'a> Parser<'a> {
                 self.consume(&RightParen, "Expect ')' after expression.")?;
                 Expr::Grouping(expr.into())
             }
-            Identifier => Expr::Variable {
-                name: candidate.into(),
-            },
+            Identifier => Expr::Variable(VariableExpr::new(candidate.into())),
             _ => return Err(self.error(&candidate, "Expect expression.")),
         };
 

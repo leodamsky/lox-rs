@@ -30,22 +30,28 @@ fn run_prompt() {
     let mut buf = String::new();
     loop {
         print!("> ");
+        // OS usually flushes written data on a line-feed
+        // so, we need to manually flush "> "
         match flush_and_read(&mut buf) {
             Ok(read) => {
                 if read == 0 {
                     break;
                 }
-                // should be in a separate crate?
+                // following: io::Lines::next()
+                // Rust doesn't strip line-feed
                 if buf.ends_with('\n') {
                     buf.pop();
                     if buf.ends_with('\r') {
                         buf.pop();
                     }
                 }
-                lox.run(buf.drain(..).collect::<String>());
+                let line = buf.drain(..).collect::<String>();
+                lox.run(line);
             }
             Err(e) => lox.scan_error(0, e.to_string()),
         }
+        // we discard errors in REPL
+        // so that users could continue using it
         lox.set_had_error(false);
     }
 }
