@@ -114,8 +114,8 @@ impl Lox {
 }
 
 struct FunctionStmt {
-    name: Token,
-    params: Vec<Token>,
+    name: Rc<Token>,
+    params: Vec<Rc<Token>>,
     body: Vec<Stmt>,
 }
 
@@ -138,7 +138,7 @@ pub(crate) enum Stmt {
         body: Box<Stmt>,
     },
     Var {
-        name: Token,
+        name: Rc<Token>,
         initializer: Option<Expr>,
     },
 }

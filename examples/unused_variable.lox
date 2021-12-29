@@ -1,0 +1,18 @@
+var a = "top-level unused, which is OK according to the homework assignment";
+
+fun notOk() {
+    var stuff = "local variable, which is used";
+    var usedNested = "var that is not used here but used in closure";
+    var badVariable = "unused local";
+
+    fun closure() {
+        // comment this out to see more errors
+        print usedNested;
+    }
+
+    closure();
+
+    print stuff;
+}
+
+notOk();

@@ -61,7 +61,8 @@ impl Resolve for Stmt {
             }
             Stmt::Return { keyword, value } => {
                 if let FunctionType::None = ctx.cur_function {
-                    ctx.lox.syntax_error(keyword, "Can't return from top-level code.");
+                    ctx.lox
+                        .syntax_error(keyword, "Can't return from top-level code.");
                 }
 
                 if let Some(value) = value {
@@ -88,7 +89,9 @@ impl Resolve for Expr {
         fn resolve_local(ctx: &mut Context, expr_id: usize, name: &Token) {
             for i in (0..ctx.scopes.len()).rev() {
                 if ctx.scopes[i].contains_key(&name.lexeme) {
-                    ctx.lox.binding.bind(expr_id, ctx.scopes.len() - 1 - i);
+                    let hops_to_env = ctx.scopes.len() - 1 - i;
+                    ctx.lox.binding.bind(expr_id, hops_to_env);
+                    ctx.scopes[i].get_mut(&name.lexeme).unwrap().state = VarState::Used;
                     return;
                 }
             }
@@ -123,8 +126,8 @@ impl Resolve for Expr {
                 right.resolve(ctx);
             }
             Expr::Variable(VariableExpr { id, name }) => {
-                if let Some(initialized) = ctx.scopes.last().and_then(|s| s.get(&name.lexeme)) {
-                    if !initialized {
+                if let Some(variable) = ctx.scopes.last().and_then(|s| s.get(&name.lexeme)) {
+                    if let VarState::Declared = variable.state {
                         ctx.lox.syntax_error(
                             name,
                             "Can't read local variable in its own initializer.",
@@ -140,7 +143,7 @@ impl Resolve for Expr {
 
 pub(crate) struct Context<'a> {
     lox: &'a mut Lox,
-    scopes: Vec<HashMap<Rc<String>, bool>>,
+    scopes: Vec<HashMap<Rc<String>, Variable>>,
     cur_function: FunctionType,
 }
 
@@ -157,26 +160,51 @@ impl<'a> Context<'a> {
         self.scopes.push(HashMap::new());
     }
 
-    fn declare(&mut self, name: &Token) {
+    fn declare(&mut self, name: &Rc<Token>) {
         if let Some(scope) = self.scopes.last_mut() {
             if scope.contains_key(&name.lexeme) {
                 self.lox
                     .syntax_error(name, "Already a variable with this name in this scope.");
             }
 
-            scope.insert(Rc::clone(&name.lexeme), false);
+            scope.insert(
+                Rc::clone(&name.lexeme),
+                Variable {
+                    token: Rc::clone(name),
+                    state: VarState::Declared,
+                },
+            );
         }
     }
 
     fn define(&mut self, name: &Token) {
         if let Some(scope) = self.scopes.last_mut() {
-            scope.insert(Rc::clone(&name.lexeme), true);
+            scope.get_mut(&name.lexeme).unwrap().state = VarState::Defined;
         }
     }
 
     fn end_scope(&mut self) {
-        self.scopes.pop();
+        if let Some(scope) = self.scopes.pop() {
+            for variable in scope.values() {
+                if let VarState::Used = variable.state {
+                    continue;
+                }
+                self.lox
+                    .syntax_error(&variable.token, "Local variable is never used.")
+            }
+        }
     }
+}
+
+struct Variable {
+    token: Rc<Token>,
+    state: VarState,
+}
+
+enum VarState {
+    Declared,
+    Defined,
+    Used,
 }
 
 #[derive(Copy, Clone)]

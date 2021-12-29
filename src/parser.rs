@@ -67,7 +67,8 @@ impl<'a> Parser<'a> {
         let mut parameters = vec![];
         if !self.check(&RightParen) {
             loop {
-                parameters.push(self.consume(&Identifier, "Expect parameter name.")?);
+                let parameter = self.consume(&Identifier, "Expect parameter name.")?;
+                parameters.push(Rc::new(parameter));
                 if parameters.len() > 255 {
                     let token = self.tokens.peek().unwrap();
                     self.lox
@@ -88,7 +89,7 @@ impl<'a> Parser<'a> {
         let body = self.block()?;
 
         Ok(Stmt::Function(Rc::new(FunctionStmt {
-            name,
+            name: Rc::new(name),
             params: parameters,
             body,
         })))
@@ -104,7 +105,7 @@ impl<'a> Parser<'a> {
         };
 
         self.consume(&Semicolon, "Expect ';' after variable declaration.")?;
-        Ok(Stmt::Var { name, initializer })
+        Ok(Stmt::Var { name: Rc::new(name), initializer })
     }
 
     fn statement(&mut self) -> Result<Stmt, ParseError> {
