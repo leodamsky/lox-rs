@@ -101,6 +101,9 @@ impl Environment {
     fn global() -> Environment {
         let mut values = HashMap::new();
 
+        // TODO: refactor code and separate global and local environments
+        //  local variables should be accessed by index
+        //  global variables - by name
         values.insert(
             "clock".to_string().into(),
             Value::Callable(Box::new(NativeFn {
