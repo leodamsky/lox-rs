@@ -9,6 +9,8 @@ fn main() {
         2 => run_file(args[1].clone()),
         _ => {
             println!("Usage: jlox [script]");
+            // https://www.freebsd.org/cgi/man.cgi?query=sysexits&apropos=0&sektion=0&manpath=FreeBSD+4.3-RELEASE&format=html
+            // incorrect command usage
             process::exit(64);
         }
     }
@@ -18,9 +20,11 @@ fn run_file(path: String) {
     let mut lox = Lox::new();
     lox.run_file(path);
     if lox.had_error() {
+        // incorrect input (source code)
         process::exit(65);
     }
     if lox.had_runtime_error() {
+        // command execution error
         process::exit(70);
     }
 }
