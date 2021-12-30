@@ -84,13 +84,13 @@ impl Interpreter {
     pub(crate) fn interpret(
         &self,
         statements: Vec<Stmt>,
-        binding: &Binding,
+        binding: Rc<RefCell<Binding>>,
     ) -> Result<(), InterpretError> {
         for statement in statements {
             statement.interpret(
                 Rc::clone(&self.environment),
                 Rc::clone(&self.environment),
-                &binding,
+                Rc::clone(&binding),
             )?;
         }
         Ok(())
@@ -214,7 +214,7 @@ trait Interpret<T> {
         &self,
         global: Rc<RefCell<Environment>>,
         env: Rc<RefCell<Environment>>,
-        binding: &Binding,
+        binding: Rc<RefCell<Binding>>,
     ) -> Result<T, InterpretError>;
 }
 
@@ -223,16 +223,16 @@ impl Interpret<()> for Stmt {
         &self,
         global: Rc<RefCell<Environment>>,
         env: Rc<RefCell<Environment>>,
-        binding: &Binding,
+        binding: Rc<RefCell<Binding>>,
     ) -> Result<(), InterpretError> {
         fn execute_block(
             statements: &Vec<Stmt>,
             global: Rc<RefCell<Environment>>,
             env: Rc<RefCell<Environment>>,
-            binding: &Binding,
+            binding: Rc<RefCell<Binding>>,
         ) -> Result<(), InterpretError> {
             for statement in statements {
-                statement.interpret(Rc::clone(&global), Rc::clone(&env), binding)?;
+                statement.interpret(Rc::clone(&global), Rc::clone(&env), Rc::clone(&binding))?;
             }
             Ok(())
         }
@@ -286,7 +286,7 @@ impl Interpret<()> for Stmt {
             } => {
                 if is_truthy(
                     &condition
-                        .interpret(Rc::clone(&global), Rc::clone(&env), binding)?
+                        .interpret(Rc::clone(&global), Rc::clone(&env), Rc::clone(&binding))?
                         .borrow(),
                 ) {
                     then_branch.interpret(global, env, binding)?
@@ -313,10 +313,10 @@ impl Interpret<()> for Stmt {
             Stmt::While { condition, body } => {
                 while is_truthy(
                     &condition
-                        .interpret(Rc::clone(&global), Rc::clone(&env), binding)?
+                        .interpret(Rc::clone(&global), Rc::clone(&env), Rc::clone(&binding))?
                         .borrow(),
                 ) {
-                    body.interpret(Rc::clone(&global), Rc::clone(&env), binding)?;
+                    body.interpret(Rc::clone(&global), Rc::clone(&env), Rc::clone(&binding))?;
                 }
             }
             Stmt::Var { name, initializer } => {
@@ -338,7 +338,7 @@ impl Interpret<Rc<RefCell<Value>>> for Expr {
         &self,
         global: Rc<RefCell<Environment>>,
         env: Rc<RefCell<Environment>>,
-        binding: &Binding,
+        binding: Rc<RefCell<Binding>>,
     ) -> Result<Rc<RefCell<Value>>, InterpretError> {
         fn look_up_variable(
             global: &Environment,
@@ -356,8 +356,9 @@ impl Interpret<Rc<RefCell<Value>>> for Expr {
         }
         let expr: Rc<RefCell<Value>> = match self {
             Expr::Assign(AssignExpr { id, name, value }) => {
-                let value = value.interpret(Rc::clone(&env), Rc::clone(&env), binding)?;
-                if let Some(distance) = binding.resolve(*id) {
+                let value =
+                    value.interpret(Rc::clone(&env), Rc::clone(&env), Rc::clone(&binding))?;
+                if let Some(distance) = binding.borrow().resolve(*id) {
                     env.borrow_mut()
                         .assign_at(distance, name, Rc::clone(&value))?;
                 } else {
@@ -370,7 +371,8 @@ impl Interpret<Rc<RefCell<Value>>> for Expr {
                 operator,
                 right,
             } => {
-                let left = left.interpret(Rc::clone(&global), Rc::clone(&env), binding)?;
+                let left =
+                    left.interpret(Rc::clone(&global), Rc::clone(&env), Rc::clone(&binding))?;
                 let right = right.interpret(global, env, binding)?;
 
                 match operator.kind {
@@ -451,11 +453,16 @@ impl Interpret<Rc<RefCell<Value>>> for Expr {
                 paren,
                 arguments,
             } => {
-                let callee = callee.interpret(Rc::clone(&global), Rc::clone(&env), binding)?;
+                let callee =
+                    callee.interpret(Rc::clone(&global), Rc::clone(&env), Rc::clone(&binding))?;
 
                 let mut args = vec![];
                 for argument in arguments {
-                    args.push(argument.interpret(Rc::clone(&global), Rc::clone(&env), binding)?);
+                    args.push(argument.interpret(
+                        Rc::clone(&global),
+                        Rc::clone(&env),
+                        Rc::clone(&binding),
+                    )?);
                 }
 
                 // TODO: can I inline this?
@@ -510,7 +517,8 @@ impl Interpret<Rc<RefCell<Value>>> for Expr {
                 operator,
                 right,
             } => {
-                let left = left.interpret(Rc::clone(&global), Rc::clone(&env), binding)?;
+                let left =
+                    left.interpret(Rc::clone(&global), Rc::clone(&env), Rc::clone(&binding))?;
                 if let TokenKind::Or = operator.kind {
                     if is_truthy(&left.borrow()) {
                         return Ok(left);
@@ -527,7 +535,8 @@ impl Interpret<Rc<RefCell<Value>>> for Expr {
                 name,
                 value,
             } => {
-                let object = object.interpret(Rc::clone(&global), Rc::clone(&env), binding)?;
+                let object =
+                    object.interpret(Rc::clone(&global), Rc::clone(&env), Rc::clone(&binding))?;
                 let borrowed_object: &Value = &object.borrow();
 
                 if let Value::ClassInstance(instance) = borrowed_object {
@@ -541,9 +550,13 @@ impl Interpret<Rc<RefCell<Value>>> for Expr {
                     .into());
                 }
             }
-            Expr::This(ThisExpr { id, keyword }) => {
-                look_up_variable(&global.borrow(), &env.borrow(), binding, &keyword, *id)?
-            }
+            Expr::This(ThisExpr { id, keyword }) => look_up_variable(
+                &global.borrow(),
+                &env.borrow(),
+                &binding.borrow(),
+                &keyword,
+                *id,
+            )?,
             Expr::Unary { operator, right } => {
                 let right = right.interpret(global, env, binding)?;
 
@@ -565,9 +578,13 @@ impl Interpret<Rc<RefCell<Value>>> for Expr {
                     }
                 }
             }
-            Expr::Variable(VariableExpr { id, name }) => {
-                look_up_variable(&global.borrow(), &env.borrow(), binding, name, *id)?
-            }
+            Expr::Variable(VariableExpr { id, name }) => look_up_variable(
+                &global.borrow(),
+                &env.borrow(),
+                &binding.borrow(),
+                name,
+                *id,
+            )?,
         };
         Ok(expr)
     }
@@ -580,7 +597,7 @@ pub(crate) trait Callable: Display {
         &self,
         global: Rc<RefCell<Environment>>,
         env: Rc<RefCell<Environment>>,
-        binding: &Binding,
+        binding: Rc<RefCell<Binding>>,
         arguments: Vec<Rc<RefCell<Value>>>,
     ) -> Result<Rc<RefCell<Value>>, InterpretError>;
 }
@@ -594,7 +611,7 @@ impl<T: Callable> Callable for Rc<T> {
         &self,
         global: Rc<RefCell<Environment>>,
         env: Rc<RefCell<Environment>>,
-        binding: &Binding,
+        binding: Rc<RefCell<Binding>>,
         arguments: Vec<Rc<RefCell<Value>>>,
     ) -> Result<Rc<RefCell<Value>>, InterpretError> {
         <T as Callable>::call(self, global, env, binding, arguments)
@@ -626,7 +643,7 @@ impl Callable for NativeFn {
         &self,
         _: Rc<RefCell<Environment>>,
         global: Rc<RefCell<Environment>>,
-        _: &Binding,
+        _: Rc<RefCell<Binding>>,
         arguments: Vec<Rc<RefCell<Value>>>,
     ) -> Result<Rc<RefCell<Value>>, InterpretError> {
         let env = Rc::new(RefCell::new(Environment::child(global)));
@@ -672,7 +689,7 @@ impl Callable for Function {
         &self,
         global: Rc<RefCell<Environment>>,
         _: Rc<RefCell<Environment>>,
-        binding: &Binding,
+        binding: Rc<RefCell<Binding>>,
         arguments: Vec<Rc<RefCell<Value>>>,
     ) -> Result<Rc<RefCell<Value>>, InterpretError> {
         let env = Rc::new(RefCell::new(Environment::child(Rc::clone(&self.closure))));
@@ -683,7 +700,8 @@ impl Callable for Function {
         }
 
         for statement in self.declaration.body.iter() {
-            let result = statement.interpret(Rc::clone(&global), Rc::clone(&env), binding);
+            let result =
+                statement.interpret(Rc::clone(&global), Rc::clone(&env), Rc::clone(&binding));
             // TODO: can it be less ugly?
             if let Err(e) = result {
                 return if let InterpretError::Return { value, .. } = e {
@@ -733,7 +751,7 @@ impl Callable for Class {
         &self,
         global: Rc<RefCell<Environment>>,
         env: Rc<RefCell<Environment>>,
-        binding: &Binding,
+        binding: Rc<RefCell<Binding>>,
         arguments: Vec<Rc<RefCell<Value>>>,
     ) -> Result<Rc<RefCell<Value>>, InterpretError> {
         let instance = ClassInstance::new(self);

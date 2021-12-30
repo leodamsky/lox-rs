@@ -120,7 +120,10 @@ impl Resolve for Expr {
         fn resolve_local(ctx: &mut Context, expr_id: usize, name: &Token) {
             for i in (0..ctx.scopes.len()).rev() {
                 if ctx.scopes[i].contains_key(&name.lexeme) {
-                    ctx.lox.binding.bind(expr_id, ctx.scopes.len() - 1 - i);
+                    ctx.lox
+                        .binding
+                        .borrow_mut()
+                        .bind(expr_id, ctx.scopes.len() - 1 - i);
                     return;
                 }
             }

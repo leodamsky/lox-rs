@@ -1,3 +1,4 @@
+use std::cell::RefCell;
 use std::fmt::{Display, Formatter};
 use std::fs;
 use std::rc::Rc;
@@ -17,7 +18,7 @@ pub struct Lox {
     had_error: bool,
     had_runtime_error: bool,
     interpreter: Interpreter,
-    pub(crate) binding: Binding,
+    pub(crate) binding: Rc<RefCell<Binding>>,
 }
 
 impl Lox {
@@ -26,7 +27,7 @@ impl Lox {
             had_error: false,
             had_runtime_error: false,
             interpreter: Interpreter::default(),
-            binding: Binding::default(),
+            binding: Rc::new(RefCell::new(Binding::default())),
         }
     }
 
@@ -55,7 +56,7 @@ impl Lox {
             return;
         }
 
-        if let Err(e) = self.interpreter.interpret(statements, &self.binding) {
+        if let Err(e) = self.interpreter.interpret(statements, Rc::clone(&self.binding)) {
             self.runtime_error(e);
         }
     }
