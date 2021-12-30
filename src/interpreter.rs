@@ -766,7 +766,7 @@ impl ClassInstance {
         Rc::clone(self.this.as_ref().unwrap())
     }
 
-    fn get(&self, name: &Rc<Token>) -> Result<Rc<RefCell<Value>>, RuntimeError> {
+    fn get(&self, name: &Rc<Token>) -> Result<Rc<RefCell<Value>>, InterpretError> {
         if let Some(value) = self.fields.get(&name.lexeme) {
             return Ok(Rc::clone(value));
         }
@@ -780,7 +780,8 @@ impl ClassInstance {
         Err(RuntimeError {
             message: format!("Undefined property '{}'.", name.lexeme),
             token: Rc::clone(name),
-        })
+        }
+        .into())
     }
 
     fn set(&mut self, name: &Rc<Token>, value: Rc<RefCell<Value>>) -> Rc<RefCell<Value>> {
