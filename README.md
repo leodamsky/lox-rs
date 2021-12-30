@@ -16,14 +16,15 @@ classDecl -> "class" IDENTIFIER "{" function* "}" ;
 
 funDecl -> "fun" function ;
 
+varDecl -> "var" IDENTIFIER ( "=" expression )? ";" ;
+
 statement -> exprStmt
            | forStmt
            | ifStmt
            | printStmt
            | returnStmt
            | whileStmt
-           | block
-           | function ;
+           | block ;
 
 exprStmt -> expression ";" ;
 
