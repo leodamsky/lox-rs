@@ -260,6 +260,9 @@ impl Interpret<()> for Stmt {
                 let class = Class {
                     name: Rc::clone(&name.lexeme),
                     methods: Rc::new(functions),
+                    global,
+                    env: Rc::clone(&env),
+                    binding,
                 };
                 env.borrow_mut()
                     .assign(name, Value::Callable(Box::new(class)).into())?;
@@ -730,6 +733,10 @@ impl Callable for Function {
 struct Class {
     name: Rc<String>,
     methods: Rc<HashMap<Rc<String>, Rc<Function>>>,
+    // environment for getters
+    global: Rc<RefCell<Environment>>,
+    env: Rc<RefCell<Environment>>,
+    binding: Rc<RefCell<Binding>>,
 }
 
 impl Display for Class {
@@ -769,6 +776,10 @@ pub(crate) struct ClassInstance {
     class_name: Rc<String>,
     fields: HashMap<Rc<String>, Rc<RefCell<Value>>>,
     methods: Rc<HashMap<Rc<String>, Rc<Function>>>,
+    // environment for getters
+    global: Rc<RefCell<Environment>>,
+    env: Rc<RefCell<Environment>>,
+    binding: Rc<RefCell<Binding>>,
 }
 
 impl ClassInstance {
@@ -778,6 +789,9 @@ impl ClassInstance {
             class_name: Rc::clone(&class.name),
             fields: HashMap::new(),
             methods: Rc::clone(&class.methods),
+            global: Rc::clone(&class.global),
+            env: Rc::clone(&class.env),
+            binding: Rc::clone(&class.binding),
         };
         let instance = Rc::new(RefCell::new(instance));
         instance.borrow_mut().this = Some(Rc::clone(&instance));
@@ -798,7 +812,12 @@ impl ClassInstance {
             let method = method.bind(self.this());
 
             if method.getter {
-                return method.call(todo!(), todo!(), todo!(), vec![]);
+                return method.call(
+                    Rc::clone(&self.global),
+                    Rc::clone(&self.env),
+                    Rc::clone(&self.binding),
+                    vec![],
+                );
             }
 
             return Ok(Value::Callable(Box::new(Rc::new(method))).into());
