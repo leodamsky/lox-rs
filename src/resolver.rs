@@ -51,7 +51,10 @@ impl Resolve for Stmt {
                     .insert("this".to_string().into(), true);
 
                 for method in methods {
-                    let declaration = FunctionType::Method;
+                    let mut declaration = FunctionType::Method;
+                    if method.name.lexeme.as_str() == "init" {
+                        declaration = FunctionType::Initializer;
+                    }
                     resolve_function(method, ctx, declaration);
                 }
 
@@ -88,6 +91,12 @@ impl Resolve for Stmt {
                 }
 
                 if let Some(value) = value {
+                    if let FunctionType::Initializer = ctx.cur_function {
+                        ctx.lox.syntax_error(
+                            keyword,
+                            "Can't return a value from from an initializer.",
+                        );
+                    }
                     value.resolve(ctx);
                 }
             }
@@ -222,6 +231,7 @@ impl<'a> Context<'a> {
 enum FunctionType {
     None,
     Function,
+    Initializer,
     Method,
 }
 

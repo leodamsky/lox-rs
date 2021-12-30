@@ -11,7 +11,9 @@ use TokenKind::{
 use crate::TokenKind::{
     And, Comma, Dot, Else, Equal, Identifier, LeftBrace, Or, RightBrace, RightParen,
 };
-use crate::{AssignExpr, Expr, FunctionStmt, Literal, Lox, Stmt, ThisExpr, Token, TokenKind, VariableExpr};
+use crate::{
+    AssignExpr, Expr, FunctionStmt, Literal, Lox, Stmt, ThisExpr, Token, TokenKind, VariableExpr,
+};
 
 #[derive(Debug)]
 pub(crate) struct ParseError {}

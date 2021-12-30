@@ -9,6 +9,7 @@ use crate::{
     AssignExpr, Expr, FunctionStmt, Literal, Stmt, ThisExpr, Token, TokenKind, VariableExpr,
 };
 
+/// Every runtime value must fit in either of these variants.
 pub(crate) enum Value {
     Number(f64),
     String(Rc<String>),
@@ -114,7 +115,7 @@ impl Environment {
                         .duration_since(UNIX_EPOCH)
                         .expect("Time went backwards.")
                         .as_millis();
-                    Ok(Value::Number(time_millis as f64))
+                    Ok(Value::Number(time_millis as f64).into())
                 }),
             }))
             .into(),
@@ -149,16 +150,15 @@ impl Environment {
         Some(environment)
     }
 
-    fn get_at(
-        &self,
-        distance: usize,
-        name: &Rc<Token>,
-    ) -> Result<Rc<RefCell<Value>>, RuntimeError> {
-        if let Some(env) = self.ancestor(distance) {
-            env.borrow().get(&name)
+    /// Returns pre-indexed (in Resolver) variable based on [distance].
+    /// Panics if variable doesn't exist. This indicates that Resolver works incorrectly.
+    fn get_at(&self, distance: usize, name: &String) -> Rc<RefCell<Value>> {
+        let value = if let Some(env) = self.ancestor(distance) {
+            env.borrow().values.get(name).map(Rc::clone)
         } else {
-            self.get(&name)
-        }
+            self.values.get(name).map(Rc::clone)
+        };
+        value.unwrap()
     }
 
     fn get(&self, name: &Rc<Token>) -> Result<Rc<RefCell<Value>>, RuntimeError> {
@@ -247,9 +247,11 @@ impl Interpret<()> for Stmt {
 
                 let mut functions = HashMap::new();
                 for method in methods {
+                    let initializer = method.name.lexeme.as_str() == "init";
                     let function = Function {
                         declaration: Rc::clone(method),
                         closure: Rc::clone(&env),
+                        initializer,
                     };
                     functions.insert(Rc::clone(&method.name.lexeme), Rc::new(function));
                 }
@@ -268,6 +270,7 @@ impl Interpret<()> for Stmt {
                 let function = Function {
                     declaration: Rc::clone(stmt),
                     closure: Rc::clone(&env),
+                    initializer: false,
                 };
                 env.borrow_mut().define(
                     &stmt.name.lexeme,
@@ -344,7 +347,7 @@ impl Interpret<Rc<RefCell<Value>>> for Expr {
         ) -> Result<Rc<RefCell<Value>>, RuntimeError> {
             let distance = binding.resolve(id);
             if let Some(distance) = distance {
-                env.get_at(distance, name)
+                Ok(env.get_at(distance, &name.lexeme))
             } else {
                 global.get(name)
             }
@@ -577,7 +580,7 @@ pub(crate) trait Callable: Display {
         env: Rc<RefCell<Environment>>,
         binding: &Binding,
         arguments: Vec<Rc<RefCell<Value>>>,
-    ) -> Result<Value, InterpretError>;
+    ) -> Result<Rc<RefCell<Value>>, InterpretError>;
 }
 
 impl<T: Callable> Callable for Rc<T> {
@@ -591,7 +594,7 @@ impl<T: Callable> Callable for Rc<T> {
         env: Rc<RefCell<Environment>>,
         binding: &Binding,
         arguments: Vec<Rc<RefCell<Value>>>,
-    ) -> Result<Value, InterpretError> {
+    ) -> Result<Rc<RefCell<Value>>, InterpretError> {
         <T as Callable>::call(self, global, env, binding, arguments)
     }
 }
@@ -599,7 +602,10 @@ impl<T: Callable> Callable for Rc<T> {
 struct NativeFn {
     arity: usize,
     function: Box<
-        dyn Fn(Rc<RefCell<Environment>>, Vec<Rc<RefCell<Value>>>) -> Result<Value, InterpretError>,
+        dyn Fn(
+            Rc<RefCell<Environment>>,
+            Vec<Rc<RefCell<Value>>>,
+        ) -> Result<Rc<RefCell<Value>>, InterpretError>,
     >,
 }
 
@@ -620,7 +626,7 @@ impl Callable for NativeFn {
         global: Rc<RefCell<Environment>>,
         _: &Binding,
         arguments: Vec<Rc<RefCell<Value>>>,
-    ) -> Result<Value, InterpretError> {
+    ) -> Result<Rc<RefCell<Value>>, InterpretError> {
         let env = Rc::new(RefCell::new(Environment::child(global)));
         (self.function)(env, arguments)
     }
@@ -629,6 +635,7 @@ impl Callable for NativeFn {
 struct Function {
     declaration: Rc<FunctionStmt>,
     closure: Rc<RefCell<Environment>>,
+    initializer: bool,
 }
 
 impl Function {
@@ -641,6 +648,7 @@ impl Function {
         Function {
             declaration: Rc::clone(&self.declaration),
             closure: Rc::new(RefCell::new(env)),
+            initializer: self.initializer,
         }
     }
 }
@@ -662,17 +670,38 @@ impl Callable for Function {
         _: Rc<RefCell<Environment>>,
         binding: &Binding,
         arguments: Vec<Rc<RefCell<Value>>>,
-    ) -> Result<Value, InterpretError> {
+    ) -> Result<Rc<RefCell<Value>>, InterpretError> {
         let env = Rc::new(RefCell::new(Environment::child(Rc::clone(&self.closure))));
         for i in 0..self.declaration.params.len() {
             let name = &self.declaration.params[i].lexeme;
             let value = Rc::clone(&arguments[i]);
             env.borrow_mut().define(name, value);
         }
+
         for statement in self.declaration.body.iter() {
-            statement.interpret(Rc::clone(&global), Rc::clone(&env), binding)?;
+            let result = statement.interpret(Rc::clone(&global), Rc::clone(&env), binding);
+            // TODO: can it be less ugly?
+            if let Err(e) = result {
+                return if let InterpretError::Return { value, .. } = e {
+                    if self.initializer {
+                        Ok(self.closure.borrow().get_at(0, &"this".to_string()))
+                    } else {
+                        Ok(value)
+                    }
+                } else {
+                    Err(e)
+                };
+            };
         }
-        Ok(Value::Nil)
+
+        if self.initializer {
+            return Ok(self.closure.borrow().get_at(0, &"this".to_string()));
+        }
+
+        // only 'return' statement can return values
+        // and 'return' is propagated via InterpretError
+        // to unwind the stack
+        Ok(Value::Nil.into())
     }
 }
 
@@ -689,18 +718,27 @@ impl Display for Class {
 
 impl Callable for Class {
     fn arity(&self) -> usize {
-        0
+        if let Some(initializer) = self.methods.get(&"init".to_string()) {
+            initializer.arity()
+        } else {
+            0
+        }
     }
 
     fn call(
         &self,
-        _: Rc<RefCell<Environment>>,
-        _: Rc<RefCell<Environment>>,
-        _: &Binding,
-        _: Vec<Rc<RefCell<Value>>>,
-    ) -> Result<Value, InterpretError> {
+        global: Rc<RefCell<Environment>>,
+        env: Rc<RefCell<Environment>>,
+        binding: &Binding,
+        arguments: Vec<Rc<RefCell<Value>>>,
+    ) -> Result<Rc<RefCell<Value>>, InterpretError> {
         let instance = ClassInstance::new(self);
-        Ok(Value::ClassInstance(instance))
+        if let Some(initializer) = self.methods.get(&"init".to_string()) {
+            initializer
+                .bind(Rc::clone(&instance))
+                .call(global, env, binding, arguments)?;
+        }
+        Ok(Value::ClassInstance(instance).into())
     }
 }
 
