@@ -5,7 +5,9 @@ use std::rc::Rc;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use crate::resolver::Binding;
-use crate::{AssignExpr, Expr, FunctionStmt, Literal, Stmt, Token, TokenKind, VariableExpr};
+use crate::{
+    AssignExpr, Expr, FunctionStmt, Literal, Stmt, ThisExpr, Token, TokenKind, VariableExpr,
+};
 
 pub(crate) enum Value {
     Number(f64),
@@ -13,7 +15,7 @@ pub(crate) enum Value {
     Boolean(bool),
     Nil,
     Callable(Box<dyn Callable>),
-    ClassInstance(ClassInstance),
+    ClassInstance(Rc<RefCell<ClassInstance>>),
 }
 
 impl Display for Value {
@@ -31,7 +33,7 @@ impl Display for Value {
             Value::Boolean(b) => Display::fmt(b, f),
             Value::Nil => write!(f, "nil"),
             Value::Callable(call) => Display::fmt(call, f),
-            Value::ClassInstance(instance) => Display::fmt(instance, f),
+            Value::ClassInstance(instance) => Display::fmt(&instance.borrow(), f),
         }
     }
 }
@@ -485,7 +487,7 @@ impl Interpret<Rc<RefCell<Value>>> for Expr {
                 let value = object.interpret(global, env, binding)?;
                 // TODO: can I inline this?
                 let result = match &*value.borrow() {
-                    Value::ClassInstance(instance) => instance.get(name)?,
+                    Value::ClassInstance(instance) => instance.borrow().get(name)?,
                     _ => {
                         return Err(RuntimeError {
                             token: Rc::clone(name),
@@ -521,11 +523,11 @@ impl Interpret<Rc<RefCell<Value>>> for Expr {
                 value,
             } => {
                 let object = object.interpret(Rc::clone(&global), Rc::clone(&env), binding)?;
-                let mut borrowed_object = object.borrow_mut();
+                let borrowed_object: &Value = &object.borrow();
 
-                if let Value::ClassInstance(instance) = &mut *borrowed_object {
+                if let Value::ClassInstance(instance) = borrowed_object {
                     let value = value.interpret(global, env, binding)?;
-                    instance.set(name, value)
+                    instance.borrow_mut().set(name, value)
                 } else {
                     return Err(RuntimeError {
                         token: Rc::clone(name),
@@ -533,6 +535,9 @@ impl Interpret<Rc<RefCell<Value>>> for Expr {
                     }
                     .into());
                 }
+            }
+            Expr::This(ThisExpr { id, keyword }) => {
+                look_up_variable(&global.borrow(), &env.borrow(), binding, &keyword, *id)?
             }
             Expr::Unary { operator, right } => {
                 let right = right.interpret(global, env, binding)?;
@@ -626,6 +631,20 @@ struct Function {
     closure: Rc<RefCell<Environment>>,
 }
 
+impl Function {
+    fn bind(&self, instance: Rc<RefCell<ClassInstance>>) -> Function {
+        let mut env = Environment::child(Rc::clone(&self.closure));
+        env.values.insert(
+            Rc::new("this".to_string()),
+            Value::ClassInstance(instance).into(),
+        );
+        Function {
+            declaration: Rc::clone(&self.declaration),
+            closure: Rc::new(RefCell::new(env)),
+        }
+    }
+}
+
 impl Display for Function {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         write!(f, "<fn {}>", self.declaration.name.lexeme)
@@ -686,18 +705,27 @@ impl Callable for Class {
 }
 
 pub(crate) struct ClassInstance {
+    this: Option<Rc<RefCell<ClassInstance>>>,
     class_name: Rc<String>,
     fields: HashMap<Rc<String>, Rc<RefCell<Value>>>,
     methods: Rc<HashMap<Rc<String>, Rc<Function>>>,
 }
 
 impl ClassInstance {
-    fn new(class: &Class) -> ClassInstance {
-        ClassInstance {
+    fn new(class: &Class) -> Rc<RefCell<ClassInstance>> {
+        let instance = ClassInstance {
+            this: None,
             class_name: Rc::clone(&class.name),
             fields: HashMap::new(),
             methods: Rc::clone(&class.methods),
-        }
+        };
+        let instance = Rc::new(RefCell::new(instance));
+        instance.borrow_mut().this = Some(Rc::clone(&instance));
+        instance
+    }
+
+    fn this(&self) -> Rc<RefCell<ClassInstance>> {
+        Rc::clone(self.this.as_ref().unwrap())
     }
 
     fn get(&self, name: &Rc<Token>) -> Result<Rc<RefCell<Value>>, RuntimeError> {
@@ -707,7 +735,8 @@ impl ClassInstance {
 
         // TODO: delegate method lookup to class?
         if let Some(method) = self.methods.get(&name.lexeme) {
-            return Ok(Value::Callable(Box::new(Rc::clone(method))).into());
+            let method = method.bind(self.this());
+            return Ok(Value::Callable(Box::new(Rc::new(method))).into());
         }
 
         Err(RuntimeError {

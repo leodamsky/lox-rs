@@ -163,6 +163,20 @@ impl AssignExpr {
     }
 }
 
+struct ThisExpr {
+    id: usize,
+    keyword: Rc<Token>,
+}
+
+impl ThisExpr {
+    fn new(keyword: Rc<Token>) -> ThisExpr {
+        ThisExpr {
+            id: id::next_id(),
+            keyword,
+        }
+    }
+}
+
 struct VariableExpr {
     id: usize,
     name: Rc<Token>,
@@ -205,6 +219,7 @@ pub(crate) enum Expr {
         name: Rc<Token>,
         value: Box<Expr>,
     },
+    This(ThisExpr),
     Unary {
         operator: Rc<Token>,
         right: Box<Expr>,

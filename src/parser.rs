@@ -4,14 +4,14 @@ use std::vec::IntoIter;
 
 use TokenKind::{
     Bang, BangEqual, Class, EqualEqual, False, For, Fun, Greater, GreaterEqual, If, LeftParen,
-    Less, LessEqual, Minus, Nil, Number, Plus, Print, Return, Semicolon, Slash, Star, True, Var,
-    While, EOF,
+    Less, LessEqual, Minus, Nil, Number, Plus, Print, Return, Semicolon, Slash, Star, This, True,
+    Var, While, EOF,
 };
 
 use crate::TokenKind::{
     And, Comma, Dot, Else, Equal, Identifier, LeftBrace, Or, RightBrace, RightParen,
 };
-use crate::{AssignExpr, Expr, FunctionStmt, Literal, Lox, Stmt, Token, TokenKind, VariableExpr};
+use crate::{AssignExpr, Expr, FunctionStmt, Literal, Lox, Stmt, ThisExpr, Token, TokenKind, VariableExpr};
 
 #[derive(Debug)]
 pub(crate) struct ParseError {}
@@ -408,7 +408,8 @@ impl<'a> Parser<'a> {
                 self.consume(&RightParen, "Expect ')' after expression.")?;
                 Expr::Grouping(expr.into())
             }
-            Identifier => Expr::Variable(VariableExpr::new(candidate.into())),
+            This => Expr::This(ThisExpr::new(Rc::new(candidate))),
+            Identifier => Expr::Variable(VariableExpr::new(Rc::new(candidate))),
             _ => return Err(self.error(&candidate, "Expect expression.")),
         };
 

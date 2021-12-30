@@ -1,4 +1,4 @@
-use crate::{AssignExpr, Expr, FunctionStmt, Lox, Stmt, Token, VariableExpr};
+use crate::{AssignExpr, Expr, FunctionStmt, Lox, Stmt, ThisExpr, Token, VariableExpr};
 use std::collections::HashMap;
 use std::rc::Rc;
 
@@ -38,13 +38,26 @@ impl Resolve for Stmt {
                 ctx.end_scope();
             }
             Stmt::Class { name, methods } => {
+                let enclosing = ctx.cur_class;
+                ctx.cur_class = ClassType::Class;
+
                 ctx.declare(name);
                 ctx.define(name);
+
+                ctx.begin_scope();
+                ctx.scopes
+                    .last_mut()
+                    .unwrap()
+                    .insert("this".to_string().into(), true);
 
                 for method in methods {
                     let declaration = FunctionType::Method;
                     resolve_function(method, ctx, declaration);
                 }
+
+                ctx.end_scope();
+
+                ctx.cur_class = enclosing;
             }
             Stmt::Expression(expr) => {
                 expr.resolve(ctx);
@@ -136,6 +149,13 @@ impl Resolve for Expr {
                 object.resolve(ctx);
                 value.resolve(ctx);
             }
+            Expr::This(ThisExpr { id, keyword }) => {
+                if let ClassType::None = ctx.cur_class {
+                    ctx.lox
+                        .syntax_error(keyword, "Can't use 'this' outside of a class.");
+                }
+                resolve_local(ctx, *id, keyword);
+            }
             Expr::Unary { right, .. } => {
                 right.resolve(ctx);
             }
@@ -159,6 +179,7 @@ pub(crate) struct Context<'a> {
     lox: &'a mut Lox,
     scopes: Vec<HashMap<Rc<String>, bool>>,
     cur_function: FunctionType,
+    cur_class: ClassType,
 }
 
 impl<'a> Context<'a> {
@@ -167,6 +188,7 @@ impl<'a> Context<'a> {
             lox,
             scopes: vec![],
             cur_function: FunctionType::default(),
+            cur_class: ClassType::default(),
         }
     }
 
@@ -206,6 +228,18 @@ enum FunctionType {
 impl Default for FunctionType {
     fn default() -> Self {
         FunctionType::None
+    }
+}
+
+#[derive(Copy, Clone)]
+enum ClassType {
+    None,
+    Class,
+}
+
+impl Default for ClassType {
+    fn default() -> Self {
+        ClassType::None
     }
 }
 
