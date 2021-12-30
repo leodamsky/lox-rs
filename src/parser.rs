@@ -9,7 +9,7 @@ use TokenKind::{
 };
 
 use crate::TokenKind::{
-    And, Comma, Else, Equal, Identifier, LeftBrace, Or, RightBrace, RightParen,
+    And, Comma, Dot, Else, Equal, Identifier, LeftBrace, Or, RightBrace, RightParen,
 };
 use crate::{AssignExpr, Expr, FunctionStmt, Literal, Lox, Stmt, Token, TokenKind, VariableExpr};
 
@@ -46,7 +46,9 @@ impl<'a> Parser<'a> {
     }
 
     fn declaration(&mut self) -> Result<Stmt, ParseError> {
-        let result = if self.try_consume(&Fun).is_some() {
+        let result = if self.try_consume(&Class).is_some() {
+            self.class_declaration()
+        } else if self.try_consume(&Fun).is_some() {
             self.function("function")
         } else if self.try_consume(&Var).is_some() {
             self.var_declaration()
@@ -59,6 +61,26 @@ impl<'a> Parser<'a> {
         }
 
         result
+    }
+
+    fn class_declaration(&mut self) -> Result<Stmt, ParseError> {
+        let name = self.consume(&Identifier, "Expect class name.")?;
+        self.consume(&LeftBrace, "Expect '{' before class body.")?;
+
+        let mut methods = vec![];
+        while !self.check(&RightBrace) && self.peek().is_some() {
+            if let Stmt::Function(function) = self.function("method")? {
+                methods.push(function);
+            } else {
+                unreachable!();
+            }
+        }
+
+        self.consume(&RightBrace, "Expect '}' after class body.")?;
+        Ok(Stmt::Class {
+            name: Rc::new(name),
+            methods,
+        })
     }
 
     fn function(&mut self, kind: &str) -> Result<Stmt, ParseError> {
@@ -244,6 +266,12 @@ impl<'a> Parser<'a> {
 
             if let Expr::Variable(VariableExpr { name, .. }) = expr {
                 return Ok(Expr::Assign(AssignExpr::new(name, value.into())));
+            } else if let Expr::Get { object, name } = expr {
+                return Ok(Expr::Set {
+                    object,
+                    name,
+                    value: Box::new(value),
+                });
             }
 
             self.error(&equals, "Invalid assignment target.");
@@ -316,6 +344,12 @@ impl<'a> Parser<'a> {
         loop {
             if self.try_consume(&LeftParen).is_some() {
                 expr = self.finish_call(expr)?;
+            } else if self.try_consume(&Dot).is_some() {
+                let name = self.consume(&Identifier, "Expect property name after '.'.")?;
+                expr = Expr::Get {
+                    object: Box::new(expr),
+                    name: Rc::new(name),
+                };
             } else {
                 break;
             }

@@ -121,6 +121,10 @@ struct FunctionStmt {
 
 pub(crate) enum Stmt {
     Block(Vec<Stmt>),
+    Class {
+        name: Rc<Token>,
+        methods: Vec<Rc<FunctionStmt>>,
+    },
     Expression(Expr),
     Function(Rc<FunctionStmt>),
     If {
@@ -185,12 +189,21 @@ pub(crate) enum Expr {
         paren: Rc<Token>,
         arguments: Vec<Expr>,
     },
+    Get {
+        object: Box<Expr>,
+        name: Rc<Token>,
+    },
     Grouping(Box<Expr>),
     Literal(Literal),
     Logical {
         left: Box<Expr>,
         operator: Token,
         right: Box<Expr>,
+    },
+    Set {
+        object: Box<Expr>,
+        name: Rc<Token>,
+        value: Box<Expr>,
     },
     Unary {
         operator: Rc<Token>,

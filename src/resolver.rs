@@ -37,6 +37,15 @@ impl Resolve for Stmt {
                 }
                 ctx.end_scope();
             }
+            Stmt::Class { name, methods } => {
+                ctx.declare(name);
+                ctx.define(name);
+
+                for method in methods {
+                    let declaration = FunctionType::Method;
+                    resolve_function(method, ctx, declaration);
+                }
+            }
             Stmt::Expression(expr) => {
                 expr.resolve(ctx);
             }
@@ -61,7 +70,8 @@ impl Resolve for Stmt {
             }
             Stmt::Return { keyword, value } => {
                 if let FunctionType::None = ctx.cur_function {
-                    ctx.lox.syntax_error(keyword, "Can't return from top-level code.");
+                    ctx.lox
+                        .syntax_error(keyword, "Can't return from top-level code.");
                 }
 
                 if let Some(value) = value {
@@ -111,6 +121,9 @@ impl Resolve for Expr {
                     argument.resolve(ctx);
                 }
             }
+            Expr::Get { object, .. } => {
+                object.resolve(ctx);
+            }
             Expr::Grouping(expr) => {
                 expr.resolve(ctx);
             }
@@ -118,6 +131,10 @@ impl Resolve for Expr {
             Expr::Logical { left, right, .. } => {
                 left.resolve(ctx);
                 right.resolve(ctx);
+            }
+            Expr::Set { object, value, .. } => {
+                object.resolve(ctx);
+                value.resolve(ctx);
             }
             Expr::Unary { right, .. } => {
                 right.resolve(ctx);
@@ -183,6 +200,7 @@ impl<'a> Context<'a> {
 enum FunctionType {
     None,
     Function,
+    Method,
 }
 
 impl Default for FunctionType {
