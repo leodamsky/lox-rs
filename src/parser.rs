@@ -87,7 +87,27 @@ impl<'a> Parser<'a> {
 
     fn function(&mut self, kind: &str) -> Result<Stmt, ParseError> {
         let name = self.consume(&Identifier, format!("Expect {} name.", kind))?;
-        self.consume(&LeftParen, format!("Expect '(' after {} name.", kind))?;
+        let getter;
+        let parameters = if self.try_consume(&LeftParen).is_some() {
+            getter = false;
+            self.function_parameters(kind)?
+        } else {
+            getter = true;
+            vec![]
+        };
+
+        self.consume(&LeftBrace, format!("Expect '{{' before {} body.", kind))?;
+        let body = self.block()?;
+
+        Ok(Stmt::Function(Rc::new(FunctionStmt {
+            name,
+            params: parameters,
+            body,
+            getter
+        })))
+    }
+
+    fn function_parameters(&mut self, kind: &str) -> Result<Vec<Token>, ParseError> {
         let mut parameters = vec![];
         if !self.check(&RightParen) {
             loop {
@@ -108,14 +128,7 @@ impl<'a> Parser<'a> {
             format!("Expect ')' after {} parameters.", kind),
         )?;
 
-        self.consume(&LeftBrace, format!("Expect '{{' before {} body.", kind))?;
-        let body = self.block()?;
-
-        Ok(Stmt::Function(Rc::new(FunctionStmt {
-            name,
-            params: parameters,
-            body,
-        })))
+        Ok(parameters)
     }
 
     fn var_declaration(&mut self) -> Result<Stmt, ParseError> {

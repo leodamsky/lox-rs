@@ -117,6 +117,7 @@ struct FunctionStmt {
     name: Token,
     params: Vec<Token>,
     body: Vec<Stmt>,
+    getter: bool,
 }
 
 pub(crate) enum Stmt {

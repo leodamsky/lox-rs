@@ -252,6 +252,7 @@ impl Interpret<()> for Stmt {
                         declaration: Rc::clone(method),
                         closure: Rc::clone(&env),
                         initializer,
+                        getter: method.getter,
                     };
                     functions.insert(Rc::clone(&method.name.lexeme), Rc::new(function));
                 }
@@ -271,6 +272,7 @@ impl Interpret<()> for Stmt {
                     declaration: Rc::clone(stmt),
                     closure: Rc::clone(&env),
                     initializer: false,
+                    getter: stmt.getter,
                 };
                 env.borrow_mut().define(
                     &stmt.name.lexeme,
@@ -636,6 +638,7 @@ struct Function {
     declaration: Rc<FunctionStmt>,
     closure: Rc<RefCell<Environment>>,
     initializer: bool,
+    getter: bool,
 }
 
 impl Function {
@@ -649,6 +652,7 @@ impl Function {
             declaration: Rc::clone(&self.declaration),
             closure: Rc::new(RefCell::new(env)),
             initializer: self.initializer,
+            getter: self.getter,
         }
     }
 }
@@ -766,7 +770,7 @@ impl ClassInstance {
         Rc::clone(self.this.as_ref().unwrap())
     }
 
-    fn get(&self, name: &Rc<Token>) -> Result<Rc<RefCell<Value>>, RuntimeError> {
+    fn get(&self, name: &Rc<Token>) -> Result<Rc<RefCell<Value>>, InterpretError> {
         if let Some(value) = self.fields.get(&name.lexeme) {
             return Ok(Rc::clone(value));
         }
@@ -774,13 +778,19 @@ impl ClassInstance {
         // TODO: delegate method lookup to class?
         if let Some(method) = self.methods.get(&name.lexeme) {
             let method = method.bind(self.this());
+
+            if method.getter {
+                return method.call(todo!(), todo!(), todo!(), vec![]);
+            }
+
             return Ok(Value::Callable(Box::new(Rc::new(method))).into());
         }
 
         Err(RuntimeError {
             message: format!("Undefined property '{}'.", name.lexeme),
             token: Rc::clone(name),
-        })
+        }
+        .into())
     }
 
     fn set(&mut self, name: &Rc<Token>, value: Rc<RefCell<Value>>) -> Rc<RefCell<Value>> {
