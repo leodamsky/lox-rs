@@ -1,6 +1,7 @@
 use std::cell::RefCell;
 use std::collections::HashMap;
 use std::fmt::{Display, Formatter};
+use std::ops::Deref;
 use std::rc::Rc;
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -17,7 +18,7 @@ pub(crate) enum Value {
     Nil,
     NativeFn(NativeFn),
     Function(Function),
-    Class(Rc<Class>),
+    Class(Rc<RefCell<Class>>),
     ClassInstance(Rc<RefCell<ClassInstance>>),
 }
 
@@ -37,7 +38,7 @@ impl Display for Value {
             Value::Nil => write!(f, "nil"),
             Value::NativeFn(func) => Display::fmt(&func, f),
             Value::Function(func) => Display::fmt(&func, f),
-            Value::Class(c) => Display::fmt(&c, f),
+            Value::Class(c) => Display::fmt(&c.borrow(), f),
             Value::ClassInstance(instance) => Display::fmt(&instance.borrow(), f),
         }
     }
@@ -281,13 +282,8 @@ impl Interpret<()> for Stmt {
                     functions.insert(Rc::clone(&method.name.lexeme), Rc::new(function));
                 }
 
-                let class = Class {
-                    name: Rc::clone(&name.lexeme),
-                    superclass,
-                    methods: Rc::new(functions),
-                };
-                env.borrow_mut()
-                    .assign(name, Value::Class(Rc::new(class)).into())?;
+                let class = Class::new(Rc::clone(&name.lexeme), superclass, functions);
+                env.borrow_mut().assign(name, Value::Class(class).into())?;
             }
             Stmt::Expression(expr) => {
                 expr.interpret(global, env, binding)?;
@@ -505,7 +501,7 @@ impl Interpret<Rc<RefCell<Value>>> for Expr {
                 return match &*callee.borrow() {
                     Value::NativeFn(func) => call(func),
                     Value::Function(func) => call(func),
-                    Value::Class(class) => call(class),
+                    Value::Class(class) => call(class.borrow().deref()),
                     _ => Err(RuntimeError {
                         message: "Can only call functions and classes.".to_string(),
                         token: Rc::clone(paren),
@@ -733,9 +729,45 @@ impl Callable for Function {
 }
 
 pub(crate) struct Class {
+    // TODO: I don't like this pattern, can we do better?
+    this: Option<Rc<RefCell<Class>>>,
     name: Rc<String>,
-    superclass: Option<Rc<Class>>,
-    methods: Rc<HashMap<Rc<String>, Rc<Function>>>,
+    superclass: Option<Rc<RefCell<Class>>>,
+    methods: HashMap<Rc<String>, Rc<Function>>,
+}
+
+impl Class {
+    fn new(
+        name: Rc<String>,
+        superclass: Option<Rc<RefCell<Class>>>,
+        methods: HashMap<Rc<String>, Rc<Function>>,
+    ) -> Rc<RefCell<Class>> {
+        let class = Class {
+            this: None,
+            name,
+            superclass,
+            methods,
+        };
+        let class = Rc::new(RefCell::new(class));
+        class.borrow_mut().this = Some(Rc::clone(&class));
+        class
+    }
+
+    fn this(&self) -> Rc<RefCell<Class>> {
+        Rc::clone(self.this.as_ref().unwrap())
+    }
+
+    fn find_method(&self, name: &Rc<String>) -> Option<Rc<Function>> {
+        if let Some(method) = self.methods.get(name) {
+            return Some(Rc::clone(method));
+        }
+
+        if let Some(superclass) = &self.superclass {
+            return superclass.borrow().find_method(name);
+        }
+
+        None
+    }
 }
 
 impl Display for Class {
@@ -746,7 +778,7 @@ impl Display for Class {
 
 impl Callable for Class {
     fn arity(&self) -> usize {
-        if let Some(initializer) = self.methods.get(&"init".to_string()) {
+        if let Some(initializer) = self.find_method(&Rc::new("init".to_string())) {
             initializer.arity()
         } else {
             0
@@ -760,8 +792,8 @@ impl Callable for Class {
         binding: &Binding,
         arguments: Vec<Rc<RefCell<Value>>>,
     ) -> Result<Rc<RefCell<Value>>, InterpretError> {
-        let instance = ClassInstance::new(self);
-        if let Some(initializer) = self.methods.get(&"init".to_string()) {
+        let instance = ClassInstance::new(self.this());
+        if let Some(initializer) = self.find_method(&Rc::new("init".to_string())) {
             initializer
                 .bind(Rc::clone(&instance))
                 .call(global, env, binding, arguments)?;
@@ -772,18 +804,16 @@ impl Callable for Class {
 
 pub(crate) struct ClassInstance {
     this: Option<Rc<RefCell<ClassInstance>>>,
-    class_name: Rc<String>,
+    class: Rc<RefCell<Class>>,
     fields: HashMap<Rc<String>, Rc<RefCell<Value>>>,
-    methods: Rc<HashMap<Rc<String>, Rc<Function>>>,
 }
 
 impl ClassInstance {
-    fn new(class: &Class) -> Rc<RefCell<ClassInstance>> {
+    fn new(class: Rc<RefCell<Class>>) -> Rc<RefCell<ClassInstance>> {
         let instance = ClassInstance {
             this: None,
-            class_name: Rc::clone(&class.name),
+            class,
             fields: HashMap::new(),
-            methods: Rc::clone(&class.methods),
         };
         let instance = Rc::new(RefCell::new(instance));
         instance.borrow_mut().this = Some(Rc::clone(&instance));
@@ -800,7 +830,7 @@ impl ClassInstance {
         }
 
         // TODO: delegate method lookup to class?
-        if let Some(method) = self.methods.get(&name.lexeme) {
+        if let Some(method) = self.class.borrow().find_method(&name.lexeme) {
             let method = method.bind(self.this());
             return Ok(Value::Function(method).into());
         }
@@ -821,7 +851,7 @@ impl ClassInstance {
 
 impl Display for ClassInstance {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{} instance", self.class_name)
+        write!(f, "{} instance", self.class.borrow().name)
     }
 }
 

@@ -1,11 +1,10 @@
-class Acon {
-
-}
-
-class Bacon < Acon {
-    eat() {
-        print "Crunch crunch crunch";
+class Doughnut {
+    cook() {
+        print "Fry until golden brown.";
     }
 }
 
-Bacon().eat();
+class BostonCream < Doughnut {
+}
+
+BostonCream().cook();
