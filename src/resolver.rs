@@ -37,12 +37,30 @@ impl Resolve for Stmt {
                 }
                 ctx.end_scope();
             }
-            Stmt::Class { name, methods } => {
+            Stmt::Class {
+                name,
+                superclass,
+                methods,
+            } => {
                 let enclosing = ctx.cur_class;
                 ctx.cur_class = ClassType::Class;
 
                 ctx.declare(name);
                 ctx.define(name);
+                if let Some(superclass) = superclass {
+                    match superclass {
+                        Expr::Variable(variable) => {
+                            if variable.name.lexeme == name.lexeme {
+                                ctx.lox.syntax_error(
+                                    &variable.name,
+                                    "A class can't inherit from itself.",
+                                );
+                            }
+                        }
+                        _ => unreachable!(),
+                    }
+                    superclass.resolve(ctx);
+                }
 
                 ctx.begin_scope();
                 ctx.scopes

@@ -123,6 +123,7 @@ pub(crate) enum Stmt {
     Block(Vec<Stmt>),
     Class {
         name: Rc<Token>,
+        superclass: Option<Expr>,
         methods: Vec<Rc<FunctionStmt>>,
     },
     Expression(Expr),

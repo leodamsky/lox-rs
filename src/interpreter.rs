@@ -242,7 +242,17 @@ impl Interpret<()> for Stmt {
                 let enclosing = Rc::new(RefCell::new(Environment::child(env)));
                 execute_block(statements, global, enclosing, binding)?;
             }
-            Stmt::Class { name, methods } => {
+            Stmt::Class { name, superclass, methods } => {
+                if let Some(superclass) = superclass {
+                    let superclass = superclass.interpret(global.clone(), env.clone(), binding)?;
+                    let borrowed = superclass.borrow();
+                    match &*borrowed {
+                        Value::Callable(callable) => {
+                        }
+                        _ => unreachable!(),
+                    }
+                }
+
                 env.borrow_mut().define(&name.lexeme, Value::Nil.into());
 
                 let mut functions = HashMap::new();

@@ -1,0 +1,11 @@
+class Acon {
+
+}
+
+class Bacon < Acon {
+    eat() {
+        print "Crunch crunch crunch";
+    }
+}
+
+Bacon().eat();
