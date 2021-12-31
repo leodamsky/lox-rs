@@ -51,7 +51,7 @@ impl<'a> Parser<'a> {
         let result = if self.try_consume(&Class).is_some() {
             self.class_declaration()
         } else if self.try_consume(&Fun).is_some() {
-            self.function("function")
+            self.function("function", false)
         } else if self.try_consume(&Var).is_some() {
             self.var_declaration()
         } else {
@@ -71,7 +71,9 @@ impl<'a> Parser<'a> {
 
         let mut methods = vec![];
         while !self.check(&RightBrace) && self.peek().is_some() {
-            if let Stmt::Function(function) = self.function("method")? {
+            let class_method = self.try_consume(&Class).is_some();
+
+            if let Stmt::Function(function) = self.function("method", class_method)? {
                 methods.push(function);
             } else {
                 unreachable!();
@@ -85,7 +87,7 @@ impl<'a> Parser<'a> {
         })
     }
 
-    fn function(&mut self, kind: &str) -> Result<Stmt, ParseError> {
+    fn function(&mut self, kind: &str, class_method: bool) -> Result<Stmt, ParseError> {
         let name = self.consume(&Identifier, format!("Expect {} name.", kind))?;
         self.consume(&LeftParen, format!("Expect '(' after {} name.", kind))?;
         let mut parameters = vec![];
@@ -115,6 +117,7 @@ impl<'a> Parser<'a> {
             name,
             params: parameters,
             body,
+            class_method,
         })))
     }
 

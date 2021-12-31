@@ -1,6 +1,7 @@
 use std::cell::RefCell;
 use std::collections::HashMap;
 use std::fmt::{Display, Formatter};
+use std::ops::Deref;
 use std::rc::Rc;
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -16,7 +17,9 @@ pub(crate) enum Value {
     Boolean(bool),
     Nil,
     Callable(Box<dyn Callable>),
-    ClassInstance(Rc<RefCell<ClassInstance>>),
+    Instance(Rc<RefCell<dyn Instance>>),
+    // FIXME: this is not cool
+    CallableInstance(Rc<RefCell<dyn CallableInstance>>),
 }
 
 impl Display for Value {
@@ -34,7 +37,8 @@ impl Display for Value {
             Value::Boolean(b) => Display::fmt(b, f),
             Value::Nil => write!(f, "nil"),
             Value::Callable(call) => Display::fmt(call, f),
-            Value::ClassInstance(instance) => Display::fmt(&instance.borrow(), f),
+            Value::Instance(instance) => Display::fmt(&instance.borrow(), f),
+            Value::CallableInstance(instance) => Display::fmt(&instance.borrow(), f),
         }
     }
 }
@@ -260,8 +264,10 @@ impl Interpret<()> for Stmt {
                     name: Rc::clone(&name.lexeme),
                     methods: Rc::new(functions),
                 };
-                env.borrow_mut()
-                    .assign(name, Value::Callable(Box::new(class)).into())?;
+                env.borrow_mut().assign(
+                    name,
+                    Value::CallableInstance(Rc::new(RefCell::new(class))).into(),
+                )?;
             }
             Stmt::Expression(expr) => {
                 expr.interpret(global, env, binding)?;
@@ -456,41 +462,44 @@ impl Interpret<Rc<RefCell<Value>>> for Expr {
                     args.push(argument.interpret(Rc::clone(&global), Rc::clone(&env), binding)?);
                 }
 
-                // TODO: can I inline this?
-                let result = match &*callee.borrow() {
-                    Value::Callable(callable) => {
-                        if args.len() != callable.arity() {
-                            return Err(RuntimeError {
-                                message: format!(
-                                    "Expected {} arguments but got {}.",
-                                    callable.arity(),
-                                    args.len()
-                                ),
-                                token: Rc::clone(paren),
-                            }
-                            .into());
-                        }
-                        match callable.call(global, env, binding, args) {
-                            Ok(value) => value.into(),
-                            Err(InterpretError::Return { value, .. }) => value,
-                            Err(e) => return Err(e),
-                        }
-                    }
-                    _ => {
+                let call = |callable: &dyn Callable| -> Result<Rc<RefCell<Value>>, InterpretError> {
+                    if args.len() != callable.arity() {
                         return Err(RuntimeError {
-                            message: "Can only call functions and classes.".to_string(),
+                            message: format!(
+                                "Expected {} arguments but got {}.",
+                                callable.arity(),
+                                args.len()
+                            ),
                             token: Rc::clone(paren),
                         }
                         .into());
                     }
+                    match callable.call(global, env, binding, args) {
+                        Ok(value) => Ok(value),
+                        Err(InterpretError::Return { value, .. }) => Ok(value),
+                        err => err,
+                    }
                 };
-                result
+
+                let callee: &Value = &callee.borrow();
+                return if let Value::Callable(callable) = &callee {
+                    call(callable.deref())
+                } else if let Value::CallableInstance(instance) = &callee {
+                    call(instance.borrow().as_callable())
+                } else {
+                    Err(RuntimeError {
+                        message: "Can only call functions and classes.".to_string(),
+                        token: Rc::clone(paren),
+                    }
+                    .into())
+                };
             }
             Expr::Get { object, name } => {
                 let value = object.interpret(global, env, binding)?;
                 // TODO: can I inline this?
                 let result = match &*value.borrow() {
-                    Value::ClassInstance(instance) => instance.borrow().get(name)?,
+                    Value::Instance(instance) => instance.borrow().get(name)?,
+                    Value::CallableInstance(instance) => instance.borrow().get(name)?,
                     _ => {
                         return Err(RuntimeError {
                             token: Rc::clone(name),
@@ -528,9 +537,12 @@ impl Interpret<Rc<RefCell<Value>>> for Expr {
                 let object = object.interpret(Rc::clone(&global), Rc::clone(&env), binding)?;
                 let borrowed_object: &Value = &object.borrow();
 
-                if let Value::ClassInstance(instance) = borrowed_object {
+                if let Value::Instance(instance) = borrowed_object {
                     let value = value.interpret(global, env, binding)?;
-                    instance.borrow_mut().set(name, value)
+                    instance.borrow_mut().set(name, value)?
+                } else if let Value::CallableInstance(instance) = borrowed_object {
+                    let value = value.interpret(global, env, binding)?;
+                    instance.borrow_mut().set(name, value)?
                 } else {
                     return Err(RuntimeError {
                         token: Rc::clone(name),
@@ -643,7 +655,7 @@ impl Function {
         let mut env = Environment::child(Rc::clone(&self.closure));
         env.values.insert(
             Rc::new("this".to_string()),
-            Value::ClassInstance(instance).into(),
+            Value::Instance(instance).into(),
         );
         Function {
             declaration: Rc::clone(&self.declaration),
@@ -705,6 +717,22 @@ impl Callable for Function {
     }
 }
 
+pub(crate) trait Instance: Display {
+    fn get(&self, name: &Rc<Token>) -> Result<Rc<RefCell<Value>>, InterpretError>;
+
+    fn set(
+        &mut self,
+        name: &Rc<Token>,
+        value: Rc<RefCell<Value>>,
+    ) -> Result<Rc<RefCell<Value>>, InterpretError>;
+}
+
+pub(crate) trait CallableInstance: Callable + Instance {
+    fn as_callable(&self) -> &dyn Callable;
+
+    fn as_instance(&self) -> &dyn Callable;
+}
+
 struct Class {
     name: Rc<String>,
     methods: Rc<HashMap<Rc<String>, Rc<Function>>>,
@@ -738,11 +766,54 @@ impl Callable for Class {
                 .bind(Rc::clone(&instance))
                 .call(global, env, binding, arguments)?;
         }
-        Ok(Value::ClassInstance(instance).into())
+        Ok(Value::Instance(instance).into())
     }
 }
 
-pub(crate) struct ClassInstance {
+impl Instance for Class {
+    fn get(&self, name: &Rc<Token>) -> Result<Rc<RefCell<Value>>, InterpretError> {
+        if let Some(method) = self.methods.get(&name.lexeme) {
+            return if method.declaration.class_method {
+                Ok(Value::Callable(Box::new(Rc::clone(method))).into())
+            } else {
+                Err(RuntimeError {
+                    message: "Only static methods can be invoked on a class itself.".to_string(),
+                    token: Rc::clone(name),
+                }.into())
+            };
+        }
+
+        Err(RuntimeError {
+            message: format!("Undefined property '{}'.", name.lexeme),
+            token: Rc::clone(name),
+        }
+        .into())
+    }
+
+    fn set(
+        &mut self,
+        name: &Rc<Token>,
+        _: Rc<RefCell<Value>>,
+    ) -> Result<Rc<RefCell<Value>>, InterpretError> {
+        Err(RuntimeError {
+            message: "Classes are immutable.".to_string(),
+            token: Rc::clone(name),
+        }
+        .into())
+    }
+}
+
+impl CallableInstance for Class {
+    fn as_callable(&self) -> &dyn Callable {
+        self
+    }
+
+    fn as_instance(&self) -> &dyn Callable {
+        self
+    }
+}
+
+struct ClassInstance {
     this: Option<Rc<RefCell<ClassInstance>>>,
     class_name: Rc<String>,
     fields: HashMap<Rc<String>, Rc<RefCell<Value>>>,
@@ -765,7 +836,15 @@ impl ClassInstance {
     fn this(&self) -> Rc<RefCell<ClassInstance>> {
         Rc::clone(self.this.as_ref().unwrap())
     }
+}
 
+impl Display for ClassInstance {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{} instance", self.class_name)
+    }
+}
+
+impl Instance for ClassInstance {
     fn get(&self, name: &Rc<Token>) -> Result<Rc<RefCell<Value>>, InterpretError> {
         if let Some(value) = self.fields.get(&name.lexeme) {
             return Ok(Rc::clone(value));
@@ -784,16 +863,14 @@ impl ClassInstance {
         .into())
     }
 
-    fn set(&mut self, name: &Rc<Token>, value: Rc<RefCell<Value>>) -> Rc<RefCell<Value>> {
+    fn set(
+        &mut self,
+        name: &Rc<Token>,
+        value: Rc<RefCell<Value>>,
+    ) -> Result<Rc<RefCell<Value>>, InterpretError> {
         self.fields
             .insert(Rc::clone(&name.lexeme), Rc::clone(&value));
-        value
-    }
-}
-
-impl Display for ClassInstance {
-    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{} instance", self.class_name)
+        Ok(value)
     }
 }
 

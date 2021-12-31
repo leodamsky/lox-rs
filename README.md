@@ -12,7 +12,7 @@ declaration -> classDecl
              | varDecl
              | statement ;
 
-classDecl -> "class" IDENTIFIER "{" function* "}" ;
+classDecl -> "class" IDENTIFIER "{" method* "}" ;
 
 funDecl -> "fun" function ;
 
@@ -40,6 +40,8 @@ returnStmt -> "return" expression? ";" ;
 whileStmt -> "while" "(" expression ")" statement ;
 
 block -> "{" declaration* "}" ;
+
+method -> ( "class" )? function ;
 
 function -> INDENTIFIER "(" parameters? ")" block ;
 

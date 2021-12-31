@@ -1,0 +1,8 @@
+class Math {
+    square(n) {
+        return n * n;
+    }
+}
+
+// can't call instance method on a class itself
+print Math.square(3);

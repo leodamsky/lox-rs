@@ -1,0 +1,11 @@
+// static fields are prohibited
+
+class Math {
+    class square(n) {
+        return n * n;
+    }
+}
+
+Math.sense = nil;
+
+print Math.sense;
