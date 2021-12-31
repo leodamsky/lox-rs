@@ -15,7 +15,9 @@ pub(crate) enum Value {
     String(Rc<String>),
     Boolean(bool),
     Nil,
-    Callable(Box<dyn Callable>),
+    NativeFn(NativeFn),
+    Function(Function),
+    Class(Class),
     ClassInstance(Rc<RefCell<ClassInstance>>),
 }
 
@@ -33,7 +35,9 @@ impl Display for Value {
             Value::String(s) => Display::fmt(s, f),
             Value::Boolean(b) => Display::fmt(b, f),
             Value::Nil => write!(f, "nil"),
-            Value::Callable(call) => Display::fmt(call, f),
+            Value::NativeFn(func) => Display::fmt(&func, f),
+            Value::Function(func) => Display::fmt(&func, f),
+            Value::Class(c) => Display::fmt(&c, f),
             Value::ClassInstance(instance) => Display::fmt(&instance.borrow(), f),
         }
     }
@@ -108,7 +112,7 @@ impl Environment {
 
         values.insert(
             "clock".to_string().into(),
-            Value::Callable(Box::new(NativeFn {
+            Value::NativeFn(NativeFn {
                 arity: 0,
                 function: Box::new(|_, _| {
                     let time_millis = SystemTime::now()
@@ -117,7 +121,7 @@ impl Environment {
                         .as_millis();
                     Ok(Value::Number(time_millis as f64).into())
                 }),
-            }))
+            })
             .into(),
         );
 
@@ -242,13 +246,16 @@ impl Interpret<()> for Stmt {
                 let enclosing = Rc::new(RefCell::new(Environment::child(env)));
                 execute_block(statements, global, enclosing, binding)?;
             }
-            Stmt::Class { name, superclass, methods } => {
+            Stmt::Class {
+                name,
+                superclass,
+                methods,
+            } => {
                 if let Some(superclass) = superclass {
                     let superclass = superclass.interpret(global.clone(), env.clone(), binding)?;
                     let borrowed = superclass.borrow();
                     match &*borrowed {
-                        Value::Callable(callable) => {
-                        }
+                        // TODO
                         _ => unreachable!(),
                     }
                 }
@@ -270,8 +277,7 @@ impl Interpret<()> for Stmt {
                     name: Rc::clone(&name.lexeme),
                     methods: Rc::new(functions),
                 };
-                env.borrow_mut()
-                    .assign(name, Value::Callable(Box::new(class)).into())?;
+                env.borrow_mut().assign(name, Value::Class(class).into())?;
             }
             Stmt::Expression(expr) => {
                 expr.interpret(global, env, binding)?;
@@ -284,7 +290,7 @@ impl Interpret<()> for Stmt {
                 };
                 env.borrow_mut().define(
                     &stmt.name.lexeme,
-                    Rc::new(RefCell::new(Value::Callable(Box::new(function)))),
+                    Rc::new(RefCell::new(Value::Function(function))),
                 );
             }
             Stmt::If {
@@ -466,35 +472,36 @@ impl Interpret<Rc<RefCell<Value>>> for Expr {
                     args.push(argument.interpret(Rc::clone(&global), Rc::clone(&env), binding)?);
                 }
 
-                // TODO: can I inline this?
-                let result = match &*callee.borrow() {
-                    Value::Callable(callable) => {
-                        if args.len() != callable.arity() {
-                            return Err(RuntimeError {
-                                message: format!(
-                                    "Expected {} arguments but got {}.",
-                                    callable.arity(),
-                                    args.len()
-                                ),
-                                token: Rc::clone(paren),
-                            }
-                            .into());
-                        }
-                        match callable.call(global, env, binding, args) {
-                            Ok(value) => value.into(),
-                            Err(InterpretError::Return { value, .. }) => value,
-                            Err(e) => return Err(e),
-                        }
-                    }
-                    _ => {
+                let call = |callable: &dyn Callable| -> Result<Rc<RefCell<Value>>, InterpretError> {
+                    if args.len() != callable.arity() {
                         return Err(RuntimeError {
-                            message: "Can only call functions and classes.".to_string(),
+                            message: format!(
+                                "Expected {} arguments but got {}.",
+                                callable.arity(),
+                                args.len()
+                            ),
                             token: Rc::clone(paren),
                         }
                         .into());
                     }
+                    match callable.call(global, env, binding, args) {
+                        Ok(value) => Ok(value),
+                        Err(InterpretError::Return { value, .. }) => Ok(value),
+                        err => err,
+                    }
                 };
-                result
+
+                // TODO: can I inline this?
+                return match &*callee.borrow() {
+                    Value::NativeFn(func) => call(func),
+                    Value::Function(func) => call(func),
+                    Value::Class(class) => call(class),
+                    _ => Err(RuntimeError {
+                        message: "Can only call functions and classes.".to_string(),
+                        token: Rc::clone(paren),
+                    }
+                    .into()),
+                };
             }
             Expr::Get { object, name } => {
                 let value = object.interpret(global, env, binding)?;
@@ -609,7 +616,7 @@ impl<T: Callable> Callable for Rc<T> {
     }
 }
 
-struct NativeFn {
+pub(crate) struct NativeFn {
     arity: usize,
     function: Box<
         dyn Fn(
@@ -642,7 +649,7 @@ impl Callable for NativeFn {
     }
 }
 
-struct Function {
+pub(crate) struct Function {
     declaration: Rc<FunctionStmt>,
     closure: Rc<RefCell<Environment>>,
     initializer: bool,
@@ -715,7 +722,7 @@ impl Callable for Function {
     }
 }
 
-struct Class {
+pub(crate) struct Class {
     name: Rc<String>,
     methods: Rc<HashMap<Rc<String>, Rc<Function>>>,
 }
@@ -784,7 +791,7 @@ impl ClassInstance {
         // TODO: delegate method lookup to class?
         if let Some(method) = self.methods.get(&name.lexeme) {
             let method = method.bind(self.this());
-            return Ok(Value::Callable(Box::new(Rc::new(method))).into());
+            return Ok(Value::Function(method).into());
         }
 
         Err(RuntimeError {
