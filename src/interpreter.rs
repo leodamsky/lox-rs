@@ -17,7 +17,7 @@ pub(crate) enum Value {
     Nil,
     NativeFn(NativeFn),
     Function(Function),
-    Class(Class),
+    Class(Rc<Class>),
     ClassInstance(Rc<RefCell<ClassInstance>>),
 }
 
@@ -251,14 +251,22 @@ impl Interpret<()> for Stmt {
                 superclass,
                 methods,
             } => {
-                if let Some(superclass) = superclass {
-                    let superclass = superclass.interpret(global.clone(), env.clone(), binding)?;
-                    let borrowed = superclass.borrow();
+                let superclass = if let Some(superclass) = superclass {
+                    let value = superclass.interpret(global.clone(), env.clone(), binding)?;
+                    let borrowed = value.borrow();
                     match &*borrowed {
-                        // TODO
-                        _ => unreachable!(),
+                        Value::Class(class) => Some(Rc::clone(class)),
+                        _ => {
+                            return Err(RuntimeError {
+                                message: "Superclass must be a class".to_string(),
+                                token: Rc::clone(name),
+                            }
+                            .into());
+                        }
                     }
-                }
+                } else {
+                    None
+                };
 
                 env.borrow_mut().define(&name.lexeme, Value::Nil.into());
 
@@ -275,9 +283,11 @@ impl Interpret<()> for Stmt {
 
                 let class = Class {
                     name: Rc::clone(&name.lexeme),
+                    superclass,
                     methods: Rc::new(functions),
                 };
-                env.borrow_mut().assign(name, Value::Class(class).into())?;
+                env.borrow_mut()
+                    .assign(name, Value::Class(Rc::new(class)).into())?;
             }
             Stmt::Expression(expr) => {
                 expr.interpret(global, env, binding)?;
@@ -724,6 +734,7 @@ impl Callable for Function {
 
 pub(crate) struct Class {
     name: Rc<String>,
+    superclass: Option<Rc<Class>>,
     methods: Rc<HashMap<Rc<String>, Rc<Function>>>,
 }
 
