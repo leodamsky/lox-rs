@@ -19,8 +19,8 @@ impl Resolve for Stmt {
 
             ctx.begin_scope();
             for param in &function.params {
-                ctx.declare(&param);
-                ctx.define(&param);
+                ctx.declare(param);
+                ctx.define(param);
             }
             for statement in &function.body {
                 statement.resolve(ctx);

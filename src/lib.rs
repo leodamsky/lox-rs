@@ -63,7 +63,7 @@ impl Lox {
         }
     }
 
-    fn update_binding(&mut self, statements: &Vec<Stmt>) {
+    fn update_binding(&mut self, statements: &[Stmt]) {
         let mut ctx = resolver::Context::new(self);
         for statement in statements {
             statement.resolve(&mut ctx);
@@ -87,7 +87,7 @@ impl Lox {
     }
 
     fn syntax_error(&mut self, token: &Token, message: impl AsRef<str>) {
-        if let TokenKind::EOF = token.kind {
+        if let TokenKind::Eof = token.kind {
             self.report(token.line, " at end", message);
         } else {
             self.report(token.line, format!(" at '{}'", &token.lexeme), message)
@@ -113,6 +113,12 @@ impl Lox {
             message.as_ref()
         );
         self.had_error = true;
+    }
+}
+
+impl Default for Lox {
+    fn default() -> Self {
+        Lox::new()
     }
 }
 
@@ -321,5 +327,5 @@ enum TokenKind {
     Var,
     While,
 
-    EOF,
+    Eof,
 }

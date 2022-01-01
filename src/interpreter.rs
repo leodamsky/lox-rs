@@ -13,6 +13,8 @@ use crate::{
     VariableExpr,
 };
 
+type SharedValue = Rc<RefCell<Value>>;
+
 /// Every runtime value must fit in either of these variants.
 pub(crate) enum Value {
     Number(f64),
@@ -58,14 +60,14 @@ impl From<&Literal> for Value {
     }
 }
 
-impl From<Value> for Rc<RefCell<Value>> {
+impl From<Value> for SharedValue {
     fn from(value: Value) -> Self {
         Rc::new(RefCell::new(value))
     }
 }
 
 pub(crate) enum InterpretError {
-    Return(Rc<RefCell<Value>>),
+    Return(SharedValue),
     RuntimeError(RuntimeError),
 }
 
@@ -105,20 +107,12 @@ trait Interpret<T> {
 
 impl Interpret<()> for Stmt {
     fn interpret(&self, env: &mut Environment) -> Result<(), InterpretError> {
-        fn execute_block(
-            env: &mut Environment,
-            statements: &Vec<Stmt>,
-        ) -> Result<(), InterpretError> {
-            for statement in statements {
-                statement.interpret(env)?;
-            }
-            Ok(())
-        }
-
         match self {
             Stmt::Block(statements) => {
                 let handle = env.child();
-                execute_block(env, statements)?;
+                for statement in statements {
+                    statement.interpret(env)?;
+                }
                 handle.restore_env(env);
             }
             Stmt::Class {
@@ -229,9 +223,9 @@ impl Interpret<()> for Stmt {
     }
 }
 
-impl Interpret<Rc<RefCell<Value>>> for Expr {
-    fn interpret(&self, env: &mut Environment) -> Result<Rc<RefCell<Value>>, InterpretError> {
-        let expr: Rc<RefCell<Value>> = match self {
+impl Interpret<SharedValue> for Expr {
+    fn interpret(&self, env: &mut Environment) -> Result<SharedValue, InterpretError> {
+        let expr: SharedValue = match self {
             Expr::Assign(AssignExpr { id, name, value }) => {
                 let value = value.interpret(env)?;
                 env.assign_by_id(*id, name, Rc::clone(&value))?;
@@ -330,7 +324,7 @@ impl Interpret<Rc<RefCell<Value>>> for Expr {
                     args.push(argument.interpret(env)?);
                 }
 
-                let call = |callable: &dyn Callable| -> Result<Rc<RefCell<Value>>, InterpretError> {
+                let call = |callable: &dyn Callable| -> Result<SharedValue, InterpretError> {
                     if args.len() != callable.arity() {
                         return Err(RuntimeError {
                             message: format!(
@@ -383,11 +377,10 @@ impl Interpret<Rc<RefCell<Value>>> for Expr {
                     if is_truthy(&left.borrow()) {
                         return Ok(left);
                     }
-                } else {
-                    if !is_truthy(&left.borrow()) {
-                        return Ok(left);
-                    }
+                } else if !is_truthy(&left.borrow()) {
+                    return Ok(left);
                 }
+
                 right.interpret(env)?
             }
             Expr::Set {
@@ -465,14 +458,14 @@ impl Interpret<Rc<RefCell<Value>>> for Expr {
     }
 }
 
-pub(crate) trait Callable: Display {
+trait Callable: Display {
     fn arity(&self) -> usize;
 
     fn call(
         &self,
         env: &mut Environment,
-        arguments: Vec<Rc<RefCell<Value>>>,
-    ) -> Result<Rc<RefCell<Value>>, InterpretError>;
+        arguments: Vec<SharedValue>,
+    ) -> Result<SharedValue, InterpretError>;
 }
 
 impl<T: Callable> Callable for Rc<T> {
@@ -483,20 +476,16 @@ impl<T: Callable> Callable for Rc<T> {
     fn call(
         &self,
         env: &mut Environment,
-        arguments: Vec<Rc<RefCell<Value>>>,
-    ) -> Result<Rc<RefCell<Value>>, InterpretError> {
+        arguments: Vec<SharedValue>,
+    ) -> Result<SharedValue, InterpretError> {
         <T as Callable>::call(self, env, arguments)
     }
 }
 
 pub(crate) struct NativeFn {
     arity: usize,
-    function: Box<
-        dyn Fn(
-            &mut Environment,
-            Vec<Rc<RefCell<Value>>>,
-        ) -> Result<Rc<RefCell<Value>>, InterpretError>,
-    >,
+    function:
+        Box<dyn Fn(&mut Environment, Vec<SharedValue>) -> Result<SharedValue, InterpretError>>,
 }
 
 impl Display for NativeFn {
@@ -513,8 +502,8 @@ impl Callable for NativeFn {
     fn call(
         &self,
         env: &mut Environment,
-        arguments: Vec<Rc<RefCell<Value>>>,
-    ) -> Result<Rc<RefCell<Value>>, InterpretError> {
+        arguments: Vec<SharedValue>,
+    ) -> Result<SharedValue, InterpretError> {
         let handle = env.native();
         let result = (self.function)(env, arguments);
         handle.restore_env(env);
@@ -557,14 +546,13 @@ impl Callable for Function {
     fn call(
         &self,
         env: &mut Environment,
-        arguments: Vec<Rc<RefCell<Value>>>,
-    ) -> Result<Rc<RefCell<Value>>, InterpretError> {
+        arguments: Vec<SharedValue>,
+    ) -> Result<SharedValue, InterpretError> {
         let handle = env.closure(self.closure.as_ref().map(Rc::clone));
 
-        for i in 0..self.declaration.params.len() {
+        for (i, argument) in arguments.iter().enumerate() {
             let name = &self.declaration.params[i].lexeme;
-            let value = Rc::clone(&arguments[i]);
-            env.define(Rc::clone(name), value);
+            env.define(Rc::clone(name), Rc::clone(argument));
         }
 
         for statement in self.declaration.body.iter() {
@@ -672,8 +660,8 @@ impl Callable for Class {
     fn call(
         &self,
         env: &mut Environment,
-        arguments: Vec<Rc<RefCell<Value>>>,
-    ) -> Result<Rc<RefCell<Value>>, InterpretError> {
+        arguments: Vec<SharedValue>,
+    ) -> Result<SharedValue, InterpretError> {
         let instance = ClassInstance::new(self.this());
         if let Some(initializer) = self.find_method(&Rc::new("init".to_string())) {
             initializer
@@ -687,7 +675,7 @@ impl Callable for Class {
 pub(crate) struct ClassInstance {
     this: Option<Rc<RefCell<ClassInstance>>>,
     class: Rc<RefCell<Class>>,
-    fields: HashMap<Rc<String>, Rc<RefCell<Value>>>,
+    fields: HashMap<Rc<String>, SharedValue>,
 }
 
 impl ClassInstance {
@@ -706,7 +694,7 @@ impl ClassInstance {
         Rc::clone(self.this.as_ref().unwrap())
     }
 
-    fn get(&self, name: &Rc<Token>) -> Result<Rc<RefCell<Value>>, InterpretError> {
+    fn get(&self, name: &Rc<Token>) -> Result<SharedValue, InterpretError> {
         if let Some(value) = self.fields.get(&name.lexeme) {
             return Ok(Rc::clone(value));
         }
@@ -723,7 +711,7 @@ impl ClassInstance {
         .into())
     }
 
-    fn set(&mut self, name: &Rc<Token>, value: Rc<RefCell<Value>>) -> Rc<RefCell<Value>> {
+    fn set(&mut self, name: &Rc<Token>, value: SharedValue) -> SharedValue {
         self.fields
             .insert(Rc::clone(&name.lexeme), Rc::clone(&value));
         value

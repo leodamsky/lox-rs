@@ -2,7 +2,7 @@ use crate::TokenKind::{
     self, And, Bang, BangEqual, Class, Comma, Dot, Else, Equal, EqualEqual, False, For, Fun,
     Greater, GreaterEqual, Identifier, If, LeftBrace, LeftParen, Less, LessEqual, Minus, Nil,
     Number, Or, Plus, Print, Return, RightBrace, RightParen, Semicolon, Slash, Star, Super, This,
-    True, Var, While, EOF,
+    True, Var, While, Eof,
 };
 use crate::{Literal, Lox, Token};
 use lazy_static::lazy_static;
@@ -60,7 +60,7 @@ impl<'a> Scanner<'a> {
         }
 
         self.tokens.push(Token {
-            kind: EOF,
+            kind: Eof,
             lexeme: String::new().into(),
             literal: None,
             line: self.line,
@@ -211,17 +211,11 @@ impl<'a> Scanner<'a> {
         if self.is_digit(c) {
             return true;
         }
-        match c {
-            'a'..='z' | 'A'..='Z' | '_' => true,
-            _ => false,
-        }
+        matches!(c, 'a'..='z' | 'A'..='Z' | '_')
     }
 
     fn is_digit(&self, c: char) -> bool {
-        match c {
-            '0'..='9' => true,
-            _ => false,
-        }
+        matches!(c, '0'..='9')
     }
 
     fn is_at_end(&self) -> bool {

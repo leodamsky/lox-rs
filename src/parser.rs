@@ -5,7 +5,7 @@ use std::vec::IntoIter;
 use TokenKind::{
     Bang, BangEqual, Class, EqualEqual, False, For, Fun, Greater, GreaterEqual, If, LeftParen,
     Less, LessEqual, Minus, Nil, Number, Plus, Print, Return, Semicolon, Slash, Star, Super, This,
-    True, Var, While, EOF,
+    True, Var, While, Eof,
 };
 
 use crate::TokenKind::{
@@ -131,7 +131,7 @@ impl<'a> Parser<'a> {
     fn var_declaration(&mut self) -> Result<Stmt, ParseError> {
         let name = self.consume(&Identifier, "Expect variable name.")?;
 
-        let initializer = if let Some(_) = self.try_consume(&Equal) {
+        let initializer = if self.try_consume(&Equal).is_some() {
             Some(self.expression()?)
         } else {
             None
@@ -187,7 +187,7 @@ impl<'a> Parser<'a> {
             body = Stmt::Block(vec![body, Stmt::Expression(increment)]);
         }
 
-        let condition = condition.unwrap_or_else(|| Expr::Literal(Literal::Boolean(true)));
+        let condition = condition.unwrap_or(Expr::Literal(Literal::Boolean(true)));
         body = Stmt::While {
             condition,
             body: body.into(),
@@ -496,7 +496,7 @@ impl<'a> Parser<'a> {
     fn peek(&mut self) -> Option<&Token> {
         let token = self.force_peek();
         // do we really need EOF ???
-        if token.kind == EOF {
+        if token.kind == Eof {
             None
         } else {
             Some(token)

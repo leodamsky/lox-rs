@@ -1,4 +1,4 @@
-use crate::interpreter::{NativeFn, RuntimeError, Value};
+use crate::interpreter::{NativeFn, RuntimeError, SharedValue, Value};
 use crate::{Binding, Token};
 use std::cell::RefCell;
 use std::collections::HashMap;
@@ -84,7 +84,7 @@ impl Environment {
         self.local.as_ref().map(Rc::clone)
     }
 
-    pub(super) fn define(&mut self, name: Rc<String>, value: Rc<RefCell<Value>>) {
+    pub(super) fn define(&mut self, name: Rc<String>, value: SharedValue) {
         if let Some(local_env) = &self.local {
             local_env.borrow_mut().define(name, value);
         } else {
@@ -96,7 +96,7 @@ impl Environment {
         &mut self,
         id: usize,
         name: &Rc<Token>,
-        value: Rc<RefCell<Value>>,
+        value: SharedValue,
     ) -> Result<(), RuntimeError> {
         if let Some(distance) = self.binding.borrow().resolve(id) {
             self.local
@@ -114,7 +114,7 @@ impl Environment {
     pub(super) fn assign(
         &mut self,
         name: &Rc<Token>,
-        value: Rc<RefCell<Value>>,
+        value: SharedValue,
     ) -> Result<(), RuntimeError> {
         if let Some(local_env) = &self.local {
             if local_env
@@ -132,7 +132,7 @@ impl Environment {
         &mut self,
         id: usize,
         name: &Rc<Token>,
-    ) -> Result<Rc<RefCell<Value>>, RuntimeError> {
+    ) -> Result<SharedValue, RuntimeError> {
         if let Some(distance) = self.binding.borrow().resolve(id) {
             Ok(self
                 .local
@@ -145,16 +145,21 @@ impl Environment {
         }
     }
 
-    pub(super) fn look_up_keyword(&mut self, id: usize, name: &str) -> Rc<RefCell<Value>> {
+    pub(super) fn look_up_keyword(&mut self, id: usize, name: &str) -> SharedValue {
         self.look_up_keyword_with_offset(id, name, 0)
     }
 
-    pub(super) fn look_up_keyword_with_offset(&mut self, id: usize, name: &str, offset: usize) -> Rc<RefCell<Value>> {
+    pub(super) fn look_up_keyword_with_offset(
+        &mut self,
+        id: usize,
+        name: &str,
+        offset: usize,
+    ) -> SharedValue {
         let distance = self
             .binding
             .borrow()
             .resolve(id)
-            .expect(&format!("Interpreter hasn't defined '{}' keyword.", name));
+            .unwrap_or_else(|| panic!("Interpreter hasn't defined '{}' keyword.", name));
         self.local
             .as_ref()
             .expect("local env to be present given binding")
@@ -164,7 +169,7 @@ impl Environment {
 }
 
 pub(crate) struct GlobalEnvironment {
-    values: HashMap<Rc<String>, Rc<RefCell<Value>>>,
+    values: HashMap<Rc<String>, SharedValue>,
 }
 
 impl GlobalEnvironment {
@@ -189,11 +194,11 @@ impl GlobalEnvironment {
         GlobalEnvironment { values }
     }
 
-    pub(super) fn define(&mut self, name: Rc<String>, value: Rc<RefCell<Value>>) {
+    pub(super) fn define(&mut self, name: Rc<String>, value: SharedValue) {
         self.values.insert(name, value);
     }
 
-    pub(super) fn get(&self, name: &Rc<Token>) -> Result<Rc<RefCell<Value>>, RuntimeError> {
+    pub(super) fn get(&self, name: &Rc<Token>) -> Result<SharedValue, RuntimeError> {
         self.values
             .get(&name.lexeme)
             .map(Rc::clone)
@@ -206,7 +211,7 @@ impl GlobalEnvironment {
     pub(super) fn assign(
         &mut self,
         name: &Rc<Token>,
-        value: Rc<RefCell<Value>>,
+        value: SharedValue,
     ) -> Result<(), RuntimeError> {
         if let Some(cur_value) = self.values.get_mut(&name.lexeme) {
             *cur_value = value;
@@ -222,7 +227,7 @@ impl GlobalEnvironment {
 
 pub(crate) struct LocalEnvironment {
     enclosing: Option<Rc<RefCell<LocalEnvironment>>>,
-    values: HashMap<Rc<String>, Rc<RefCell<Value>>>,
+    values: HashMap<Rc<String>, SharedValue>,
 }
 
 impl LocalEnvironment {
@@ -245,7 +250,7 @@ impl LocalEnvironment {
         Some(environment)
     }
 
-    pub(super) fn define(&mut self, name: Rc<String>, value: Rc<RefCell<Value>>) {
+    pub(super) fn define(&mut self, name: Rc<String>, value: SharedValue) {
         self.values.insert(name, value);
     }
 
@@ -264,7 +269,7 @@ impl LocalEnvironment {
         &mut self,
         distance: usize,
         name: &Rc<Token>,
-        value: Rc<RefCell<Value>>,
+        value: SharedValue,
     ) -> Result<(), RuntimeError> {
         if let Some(env) = self.ancestor(distance) {
             env.borrow_mut().assign(name, value)
@@ -273,11 +278,7 @@ impl LocalEnvironment {
         }
     }
 
-    fn assign(
-        &mut self,
-        name: &Rc<Token>,
-        value: Rc<RefCell<Value>>,
-    ) -> Result<(), RuntimeError> {
+    fn assign(&mut self, name: &Rc<Token>, value: SharedValue) -> Result<(), RuntimeError> {
         if let Some(cur_value) = self.values.get_mut(&name.lexeme) {
             *cur_value = value;
             return Ok(());
@@ -291,7 +292,7 @@ impl LocalEnvironment {
         })
     }
 
-    fn try_assign(&mut self, name: &Rc<Token>, value: Rc<RefCell<Value>>) -> Option<()> {
+    fn try_assign(&mut self, name: &Rc<Token>, value: SharedValue) -> Option<()> {
         if let Some(cur_value) = self.values.get_mut(&name.lexeme) {
             *cur_value = value;
             return Some(());
