@@ -2,7 +2,7 @@
 
 Implementation of the [Lox](https://craftinginterpreters.com/the-lox-language.html) language in Rust.
 `main` branch doesn't include additional features from book's challenges. Checkout a specific branch
-e.g. `static-methods` to test some extra feature.
+e.g. `static-methods` to test some extra features.
 
 ## How To Run
 
