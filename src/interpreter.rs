@@ -7,7 +7,8 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use crate::resolver::Binding;
 use crate::{
-    AssignExpr, Expr, FunctionStmt, Literal, Stmt, ThisExpr, Token, TokenKind, VariableExpr,
+    AssignExpr, Expr, FunctionStmt, Literal, Stmt, SuperExpr, ThisExpr, Token, TokenKind,
+    VariableExpr,
 };
 
 /// Every runtime value must fit in either of these variants.
@@ -271,12 +272,21 @@ impl Interpret<()> for Stmt {
 
                 env.borrow_mut().define(&name.lexeme, Value::Nil.into());
 
+                let function_env = if let Some(superclass) = &superclass {
+                    let mut child_env = Environment::child(Rc::clone(&env));
+                    let value = Rc::new(RefCell::new(Value::Class(Rc::clone(superclass))));
+                    child_env.define(&Rc::new("super".to_string()), value);
+                    Rc::new(RefCell::new(child_env))
+                } else {
+                    Rc::clone(&env)
+                };
+
                 let mut functions = HashMap::new();
                 for method in methods {
                     let initializer = method.name.lexeme.as_str() == "init";
                     let function = Function {
                         declaration: Rc::clone(method),
-                        closure: Rc::clone(&env),
+                        closure: Rc::clone(&function_env),
                         initializer,
                     };
                     functions.insert(Rc::clone(&method.name.lexeme), Rc::new(function));
@@ -561,6 +571,36 @@ impl Interpret<Rc<RefCell<Value>>> for Expr {
                     }
                     .into());
                 }
+            }
+            Expr::Super(SuperExpr {
+                id,
+                method: method_name,
+                ..
+            }) => {
+                let distance = binding.resolve(*id)
+                    .expect("validation of correct 'super' usage to happen in the resolver.");
+                let superclass = env.borrow().get_at(distance, &"super".to_string());
+                let object = env.borrow().get_at(distance - 1, &"this".to_string());
+
+                let method = match &*superclass.borrow() {
+                    Value::Class(class) => class.borrow().find_method(&method_name.lexeme),
+                    _ => unreachable!(),
+                };
+
+                let bound_method = if let Some(method) = method {
+                    match &*object.borrow() {
+                        Value::ClassInstance(instance) => method.bind(Rc::clone(instance)),
+                        _ => unreachable!(),
+                    }
+                } else {
+                    return Err(RuntimeError {
+                        message: format!("Undefined property '{}'.", method_name.lexeme),
+                        token: Rc::clone(method_name),
+                    }
+                    .into());
+                };
+
+                Rc::new(RefCell::new(Value::Function(bound_method)))
             }
             Expr::This(ThisExpr { id, keyword }) => {
                 look_up_variable(&global.borrow(), &env.borrow(), binding, &keyword, *id)?

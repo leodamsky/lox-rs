@@ -164,6 +164,22 @@ impl AssignExpr {
     }
 }
 
+struct SuperExpr {
+    id: usize,
+    keyword: Rc<Token>,
+    method: Rc<Token>,
+}
+
+impl SuperExpr {
+    fn new(keyword: Rc<Token>, method: Rc<Token>) -> SuperExpr {
+        SuperExpr {
+            id: id::next_id(),
+            keyword,
+            method,
+        }
+    }
+}
+
 struct ThisExpr {
     id: usize,
     keyword: Rc<Token>,
@@ -220,6 +236,7 @@ pub(crate) enum Expr {
         name: Rc<Token>,
         value: Box<Expr>,
     },
+    Super(SuperExpr),
     This(ThisExpr),
     Unary {
         operator: Rc<Token>,

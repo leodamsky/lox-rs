@@ -4,15 +4,16 @@ use std::vec::IntoIter;
 
 use TokenKind::{
     Bang, BangEqual, Class, EqualEqual, False, For, Fun, Greater, GreaterEqual, If, LeftParen,
-    Less, LessEqual, Minus, Nil, Number, Plus, Print, Return, Semicolon, Slash, Star, This, True,
-    Var, While, EOF,
+    Less, LessEqual, Minus, Nil, Number, Plus, Print, Return, Semicolon, Slash, Star, Super, This,
+    True, Var, While, EOF,
 };
 
 use crate::TokenKind::{
     And, Comma, Dot, Else, Equal, Identifier, LeftBrace, Or, RightBrace, RightParen,
 };
 use crate::{
-    AssignExpr, Expr, FunctionStmt, Literal, Lox, Stmt, ThisExpr, Token, TokenKind, VariableExpr,
+    AssignExpr, Expr, FunctionStmt, Literal, Lox, Stmt, SuperExpr, ThisExpr, Token, TokenKind,
+    VariableExpr,
 };
 
 #[derive(Debug)]
@@ -421,6 +422,11 @@ impl<'a> Parser<'a> {
             }
             This => Expr::This(ThisExpr::new(Rc::new(candidate))),
             Identifier => Expr::Variable(VariableExpr::new(Rc::new(candidate))),
+            Super => {
+                self.consume(&Dot, "Expect '.' after 'super'.")?;
+                let method = self.consume(&Identifier, "Expect superclass method name.")?;
+                Expr::Super(SuperExpr::new(Rc::new(candidate), Rc::new(method)))
+            }
             _ => return Err(self.error(&candidate, "Expect expression.")),
         };
 

@@ -78,6 +78,8 @@ primary -> NUMBER
          | "true"
          | "false"
          | "nil"
+         | "this"
          | "(" expression ")"
-         | IDENTIFIER;
+         | IDENTIFIER
+         | "super" "." IDENTIFIER;
 ```

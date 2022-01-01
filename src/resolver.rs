@@ -1,4 +1,4 @@
-use crate::{AssignExpr, Expr, FunctionStmt, Lox, Stmt, ThisExpr, Token, VariableExpr};
+use crate::{AssignExpr, Expr, FunctionStmt, Lox, Stmt, SuperExpr, ThisExpr, Token, VariableExpr};
 use std::collections::HashMap;
 use std::rc::Rc;
 
@@ -59,7 +59,10 @@ impl Resolve for Stmt {
                         }
                         _ => unreachable!(),
                     }
+                    ctx.cur_class = ClassType::Subclass;
                     superclass.resolve(ctx);
+                    ctx.begin_scope();
+                    ctx.scopes.last_mut().unwrap().insert("super".to_string().into(), true);
                 }
 
                 ctx.begin_scope();
@@ -77,6 +80,10 @@ impl Resolve for Stmt {
                 }
 
                 ctx.end_scope();
+
+                if superclass.is_some() {
+                    ctx.end_scope();
+                }
 
                 ctx.cur_class = enclosing;
             }
@@ -198,6 +205,18 @@ impl Resolve for Expr {
 
                 resolve_local(ctx, *id, name);
             }
+            Expr::Super(SuperExpr { id, keyword, .. }) => {
+                match ctx.cur_class {
+                    ClassType::None => ctx.lox.syntax_error(keyword, "Can't use 'super' outside of a class."),
+                    ClassType::Class => ctx.lox.syntax_error(keyword, "Can't use 'super' in a class with no superclass."),
+                    // we could move resolve_local here but we shouldn't
+                    // because resolver tries to resolve as many errors as possible
+                    // and it's reasonable to pretend we're following a happy path
+                    // (and we actually aren't broken here)
+                    ClassType::Subclass => {}
+                }
+                resolve_local(ctx, *id, keyword);
+            }
         }
     }
 }
@@ -263,6 +282,7 @@ impl Default for FunctionType {
 enum ClassType {
     None,
     Class,
+    Subclass,
 }
 
 impl Default for ClassType {
