@@ -3,13 +3,15 @@ use std::collections::HashMap;
 use std::fmt::{Display, Formatter};
 use std::ops::Deref;
 use std::rc::Rc;
-use std::time::{SystemTime, UNIX_EPOCH};
+
+mod env;
 
 use crate::resolver::Binding;
 use crate::{
     AssignExpr, Expr, FunctionStmt, Literal, Stmt, SuperExpr, ThisExpr, Token, TokenKind,
     VariableExpr,
 };
+use crate::interpreter::env::Environment;
 
 /// Every runtime value must fit in either of these variants.
 pub(crate) enum Value {
@@ -103,117 +105,6 @@ impl Interpreter {
     }
 }
 
-pub(crate) struct Environment {
-    enclosing: Option<Rc<RefCell<Environment>>>,
-    values: HashMap<Rc<String>, Rc<RefCell<Value>>>,
-}
-
-impl Environment {
-    fn global() -> Environment {
-        let mut values = HashMap::new();
-
-        values.insert(
-            "clock".to_string().into(),
-            Value::NativeFn(NativeFn {
-                arity: 0,
-                function: Box::new(|_, _| {
-                    let time_millis = SystemTime::now()
-                        .duration_since(UNIX_EPOCH)
-                        .expect("Time went backwards.")
-                        .as_millis();
-                    Ok(Value::Number(time_millis as f64).into())
-                }),
-            })
-            .into(),
-        );
-
-        Environment {
-            enclosing: None,
-            values,
-        }
-    }
-
-    fn child(enclosing: Rc<RefCell<Environment>>) -> Environment {
-        Environment {
-            values: HashMap::new(),
-            enclosing: Some(enclosing),
-        }
-    }
-
-    fn define(&mut self, name: &Rc<String>, value: Rc<RefCell<Value>>) {
-        self.values.insert(Rc::clone(name), value);
-    }
-
-    fn ancestor(&self, distance: usize) -> Option<Rc<RefCell<Environment>>> {
-        if distance == 0 {
-            return None;
-        }
-        let mut environment = Rc::clone(self.enclosing.as_ref().unwrap());
-        for _ in 0..(distance - 1) {
-            let next = Rc::clone(environment.borrow().enclosing.as_ref().unwrap());
-            environment = next;
-        }
-        Some(environment)
-    }
-
-    /// Returns pre-indexed (in Resolver) variable based on [distance].
-    /// Panics if variable doesn't exist. This indicates that Resolver works incorrectly.
-    fn get_at(&self, distance: usize, name: &String) -> Rc<RefCell<Value>> {
-        let value = if let Some(env) = self.ancestor(distance) {
-            env.borrow().values.get(name).map(Rc::clone)
-        } else {
-            self.values.get(name).map(Rc::clone)
-        };
-        value.unwrap()
-    }
-
-    fn get(&self, name: &Rc<Token>) -> Result<Rc<RefCell<Value>>, RuntimeError> {
-        if let Some(value) = self.values.get(&name.lexeme) {
-            return Ok(Rc::clone(value));
-        }
-        if let Some(enclosing) = &self.enclosing {
-            return enclosing.borrow().get(name);
-        }
-        Err(RuntimeError {
-            message: format!("Undefined variable '{}'.", name.lexeme),
-            token: Rc::clone(name),
-        })
-    }
-
-    fn assign_at(
-        &mut self,
-        distance: usize,
-        name: &Rc<Token>,
-        value: Rc<RefCell<Value>>,
-    ) -> Result<(), RuntimeError> {
-        if let Some(env) = self.ancestor(distance) {
-            env.borrow_mut().assign(name, value)
-        } else {
-            self.assign(name, value)
-        }
-    }
-
-    fn assign(&mut self, name: &Rc<Token>, value: Rc<RefCell<Value>>) -> Result<(), RuntimeError> {
-        if self.values.contains_key(&name.lexeme) {
-            self.values.insert(Rc::clone(&name.lexeme), value);
-            return Ok(());
-        }
-        if let Some(enclosing) = &self.enclosing {
-            return enclosing.borrow_mut().assign(name, value);
-        }
-        Err(RuntimeError {
-            message: format!("Undefined variable '{}'.", name.lexeme),
-            token: Rc::clone(name),
-        })
-    }
-}
-
-impl Default for Environment {
-    fn default() -> Self {
-        Environment::global()
-    }
-}
-
 trait Interpret<T> {
     // TODO: can it be refactor to &mut Environment ?
     fn interpret(
@@ -270,12 +161,12 @@ impl Interpret<()> for Stmt {
                     None
                 };
 
-                env.borrow_mut().define(&name.lexeme, Value::Nil.into());
+                env.borrow_mut().define(Rc::clone(&name.lexeme), Value::Nil.into());
 
                 let function_env = if let Some(superclass) = &superclass {
                     let mut child_env = Environment::child(Rc::clone(&env));
                     let value = Rc::new(RefCell::new(Value::Class(Rc::clone(superclass))));
-                    child_env.define(&Rc::new("super".to_string()), value);
+                    child_env.define(Rc::new("super".to_string()), value);
                     Rc::new(RefCell::new(child_env))
                 } else {
                     Rc::clone(&env)
@@ -305,7 +196,7 @@ impl Interpret<()> for Stmt {
                     initializer: false,
                 };
                 env.borrow_mut().define(
-                    &stmt.name.lexeme,
+                    Rc::clone(&stmt.name.lexeme),
                     Rc::new(RefCell::new(Value::Function(function))),
                 );
             }
@@ -356,7 +247,7 @@ impl Interpret<()> for Stmt {
                     Value::Nil.into()
                 };
 
-                env.borrow_mut().define(&name.lexeme, value)
+                env.borrow_mut().define(Rc::clone(&name.lexeme), value)
             }
         }
         Ok(())
@@ -376,7 +267,7 @@ impl Interpret<Rc<RefCell<Value>>> for Expr {
             binding: &Binding,
             name: &Rc<Token>,
             id: usize,
-        ) -> Result<Rc<RefCell<Value>>, RuntimeError> {
+        ) -> Result<Rc<RefCell<Value>>, InterpretError> {
             let distance = binding.resolve(id);
             if let Some(distance) = distance {
                 Ok(env.get_at(distance, &name.lexeme))
@@ -704,10 +595,7 @@ pub(crate) struct Function {
 impl Function {
     fn bind(&self, instance: Rc<RefCell<ClassInstance>>) -> Function {
         let mut env = Environment::child(Rc::clone(&self.closure));
-        env.values.insert(
-            Rc::new("this".to_string()),
-            Value::ClassInstance(instance).into(),
-        );
+        env.define(Rc::new("this".to_string()), Value::ClassInstance(instance).into());
         Function {
             declaration: Rc::clone(&self.declaration),
             closure: Rc::new(RefCell::new(env)),
@@ -738,7 +626,7 @@ impl Callable for Function {
         for i in 0..self.declaration.params.len() {
             let name = &self.declaration.params[i].lexeme;
             let value = Rc::clone(&arguments[i]);
-            env.borrow_mut().define(name, value);
+            env.borrow_mut().define(Rc::clone(name), value);
         }
 
         for statement in self.declaration.body.iter() {
