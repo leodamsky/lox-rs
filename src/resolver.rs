@@ -1,4 +1,5 @@
 use crate::{AssignExpr, Expr, FunctionStmt, Lox, Stmt, SuperExpr, ThisExpr, Token, VariableExpr};
+use std::cell::RefCell;
 use std::collections::HashMap;
 use std::rc::Rc;
 
@@ -62,7 +63,10 @@ impl Resolve for Stmt {
                     ctx.cur_class = ClassType::Subclass;
                     superclass.resolve(ctx);
                     ctx.begin_scope();
-                    ctx.scopes.last_mut().unwrap().insert("super".to_string().into(), true);
+                    ctx.scopes
+                        .last_mut()
+                        .unwrap()
+                        .insert("super".to_string().into(), true);
                 }
 
                 ctx.begin_scope();
@@ -145,7 +149,9 @@ impl Resolve for Expr {
         fn resolve_local(ctx: &mut Context, expr_id: usize, name: &Token) {
             for i in (0..ctx.scopes.len()).rev() {
                 if ctx.scopes[i].contains_key(&name.lexeme) {
-                    ctx.lox.binding.bind(expr_id, ctx.scopes.len() - 1 - i);
+                    ctx.binding
+                        .borrow_mut()
+                        .bind(expr_id, ctx.scopes.len() - 1 - i);
                     return;
                 }
             }
@@ -207,8 +213,12 @@ impl Resolve for Expr {
             }
             Expr::Super(SuperExpr { id, keyword, .. }) => {
                 match ctx.cur_class {
-                    ClassType::None => ctx.lox.syntax_error(keyword, "Can't use 'super' outside of a class."),
-                    ClassType::Class => ctx.lox.syntax_error(keyword, "Can't use 'super' in a class with no superclass."),
+                    ClassType::None => ctx
+                        .lox
+                        .syntax_error(keyword, "Can't use 'super' outside of a class."),
+                    ClassType::Class => ctx
+                        .lox
+                        .syntax_error(keyword, "Can't use 'super' in a class with no superclass."),
                     // we could move resolve_local here but we shouldn't
                     // because resolver tries to resolve as many errors as possible
                     // and it's reasonable to pretend we're following a happy path
@@ -223,6 +233,7 @@ impl Resolve for Expr {
 
 pub(crate) struct Context<'a> {
     lox: &'a mut Lox,
+    binding: Rc<RefCell<Binding>>,
     scopes: Vec<HashMap<Rc<String>, bool>>,
     cur_function: FunctionType,
     cur_class: ClassType,
@@ -230,8 +241,10 @@ pub(crate) struct Context<'a> {
 
 impl<'a> Context<'a> {
     pub(crate) fn new(lox: &mut Lox) -> Context {
+        let binding = Rc::clone(&lox.binding);
         Context {
             lox,
+            binding,
             scopes: vec![],
             cur_function: FunctionType::default(),
             cur_class: ClassType::default(),

@@ -1,3 +1,4 @@
+use std::cell::RefCell;
 use std::fmt::{Display, Formatter};
 use std::fs;
 use std::rc::Rc;
@@ -13,20 +14,22 @@ mod parser;
 mod resolver;
 mod scanner;
 
+/// Represents interpreter + error reporter of the Lox language.
 pub struct Lox {
     had_error: bool,
     had_runtime_error: bool,
     interpreter: Interpreter,
-    pub(crate) binding: Binding,
+    binding: Rc<RefCell<Binding>>,
 }
 
 impl Lox {
     pub fn new() -> Lox {
+        let binding = Rc::new(RefCell::new(Binding::default()));
         Lox {
             had_error: false,
             had_runtime_error: false,
-            interpreter: Interpreter::default(),
-            binding: Binding::default(),
+            interpreter: Interpreter::new(Rc::clone(&binding)),
+            binding,
         }
     }
 
@@ -55,7 +58,7 @@ impl Lox {
             return;
         }
 
-        if let Err(e) = self.interpreter.interpret(statements, &self.binding) {
+        if let Err(e) = self.interpreter.interpret(statements) {
             self.runtime_error(e);
         }
     }
@@ -83,7 +86,7 @@ impl Lox {
         self.report(line, "", message);
     }
 
-    pub(crate) fn syntax_error(&mut self, token: &Token, message: impl AsRef<str>) {
+    fn syntax_error(&mut self, token: &Token, message: impl AsRef<str>) {
         if let TokenKind::EOF = token.kind {
             self.report(token.line, " at end", message);
         } else {
@@ -91,11 +94,11 @@ impl Lox {
         }
     }
 
-    pub(crate) fn runtime_error(&mut self, error: InterpretError) {
+    fn runtime_error(&mut self, error: InterpretError) {
         let (message, token) = match error {
             InterpretError::RuntimeError(e) => (e.message, e.token),
-            InterpretError::Return { token, .. } => {
-                ("Return statement outside function.".to_string(), token)
+            InterpretError::Return { .. } => {
+                unreachable!("'return' is checked statically in the resolver.")
             }
         };
         eprintln!("{}\n[line {}]", message, token.line);
@@ -119,7 +122,7 @@ struct FunctionStmt {
     body: Vec<Stmt>,
 }
 
-pub(crate) enum Stmt {
+enum Stmt {
     Block(Vec<Stmt>),
     Class {
         name: Rc<Token>,
@@ -208,7 +211,7 @@ impl VariableExpr {
     }
 }
 
-pub(crate) enum Expr {
+enum Expr {
     Assign(AssignExpr),
     Binary {
         left: Box<Expr>,
@@ -245,8 +248,7 @@ pub(crate) enum Expr {
     Variable(VariableExpr),
 }
 
-#[derive(Clone)]
-pub(crate) enum Literal {
+enum Literal {
     Number(f64),
     String(Rc<String>),
     Boolean(bool),
@@ -264,7 +266,7 @@ impl Display for Literal {
     }
 }
 
-pub(crate) struct Token {
+struct Token {
     kind: TokenKind,
     lexeme: Rc<String>,
     literal: Option<Literal>,
@@ -272,7 +274,7 @@ pub(crate) struct Token {
 }
 
 #[derive(Copy, Clone, Eq, PartialEq)]
-pub(crate) enum TokenKind {
+enum TokenKind {
     // single-character tokens
     LeftParen,
     RightParen,

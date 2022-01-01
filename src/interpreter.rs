@@ -6,12 +6,12 @@ use std::rc::Rc;
 
 mod env;
 
+use crate::interpreter::env::{Environment, LocalEnvironment};
 use crate::resolver::Binding;
 use crate::{
     AssignExpr, Expr, FunctionStmt, Literal, Stmt, SuperExpr, ThisExpr, Token, TokenKind,
     VariableExpr,
 };
-use crate::interpreter::env::Environment;
 
 /// Every runtime value must fit in either of these variants.
 pub(crate) enum Value {
@@ -65,10 +65,7 @@ impl From<Value> for Rc<RefCell<Value>> {
 }
 
 pub(crate) enum InterpretError {
-    Return {
-        value: Rc<RefCell<Value>>,
-        token: Rc<Token>,
-    },
+    Return(Rc<RefCell<Value>>),
     RuntimeError(RuntimeError),
 }
 
@@ -83,61 +80,46 @@ impl From<RuntimeError> for InterpretError {
     }
 }
 
-#[derive(Default)]
 pub(crate) struct Interpreter {
-    environment: Rc<RefCell<Environment>>,
+    environment: Environment,
 }
 
 impl Interpreter {
-    pub(crate) fn interpret(
-        &self,
-        statements: Vec<Stmt>,
-        binding: &Binding,
-    ) -> Result<(), InterpretError> {
+    pub(crate) fn new(binding: Rc<RefCell<Binding>>) -> Interpreter {
+        Interpreter {
+            environment: Environment::new(binding),
+        }
+    }
+
+    pub(crate) fn interpret(&mut self, statements: Vec<Stmt>) -> Result<(), InterpretError> {
         for statement in statements {
-            statement.interpret(
-                Rc::clone(&self.environment),
-                Rc::clone(&self.environment),
-                &binding,
-            )?;
+            statement.interpret(&mut self.environment)?;
         }
         Ok(())
     }
 }
 
 trait Interpret<T> {
-    // TODO: can it be refactor to &mut Environment ?
-    fn interpret(
-        &self,
-        global: Rc<RefCell<Environment>>,
-        env: Rc<RefCell<Environment>>,
-        binding: &Binding,
-    ) -> Result<T, InterpretError>;
+    fn interpret(&self, env: &mut Environment) -> Result<T, InterpretError>;
 }
 
 impl Interpret<()> for Stmt {
-    fn interpret(
-        &self,
-        global: Rc<RefCell<Environment>>,
-        env: Rc<RefCell<Environment>>,
-        binding: &Binding,
-    ) -> Result<(), InterpretError> {
+    fn interpret(&self, env: &mut Environment) -> Result<(), InterpretError> {
         fn execute_block(
+            env: &mut Environment,
             statements: &Vec<Stmt>,
-            global: Rc<RefCell<Environment>>,
-            env: Rc<RefCell<Environment>>,
-            binding: &Binding,
         ) -> Result<(), InterpretError> {
             for statement in statements {
-                statement.interpret(Rc::clone(&global), Rc::clone(&env), binding)?;
+                statement.interpret(env)?;
             }
             Ok(())
         }
 
         match self {
             Stmt::Block(statements) => {
-                let enclosing = Rc::new(RefCell::new(Environment::child(env)));
-                execute_block(statements, global, enclosing, binding)?;
+                let handle = env.child();
+                execute_block(env, statements)?;
+                handle.restore_env(env);
             }
             Stmt::Class {
                 name,
@@ -145,7 +127,7 @@ impl Interpret<()> for Stmt {
                 methods,
             } => {
                 let superclass = if let Some(superclass) = superclass {
-                    let value = superclass.interpret(global.clone(), env.clone(), binding)?;
+                    let value = superclass.interpret(env)?;
                     let borrowed = value.borrow();
                     match &*borrowed {
                         Value::Class(class) => Some(Rc::clone(class)),
@@ -161,15 +143,15 @@ impl Interpret<()> for Stmt {
                     None
                 };
 
-                env.borrow_mut().define(Rc::clone(&name.lexeme), Value::Nil.into());
+                env.define(Rc::clone(&name.lexeme), Value::Nil.into());
 
-                let function_env = if let Some(superclass) = &superclass {
-                    let mut child_env = Environment::child(Rc::clone(&env));
+                let handle = if let Some(superclass) = &superclass {
+                    let handle = env.child();
                     let value = Rc::new(RefCell::new(Value::Class(Rc::clone(superclass))));
-                    child_env.define(Rc::new("super".to_string()), value);
-                    Rc::new(RefCell::new(child_env))
+                    env.define(Rc::new("super".to_string()), value);
+                    Some(handle)
                 } else {
-                    Rc::clone(&env)
+                    None
                 };
 
                 let mut functions = HashMap::new();
@@ -177,25 +159,29 @@ impl Interpret<()> for Stmt {
                     let initializer = method.name.lexeme.as_str() == "init";
                     let function = Function {
                         declaration: Rc::clone(method),
-                        closure: Rc::clone(&function_env),
+                        closure: env.capture(),
                         initializer,
                     };
                     functions.insert(Rc::clone(&method.name.lexeme), Rc::new(function));
                 }
 
+                if let Some(handle) = handle {
+                    handle.restore_env(env);
+                }
+
                 let class = Class::new(Rc::clone(&name.lexeme), superclass, functions);
-                env.borrow_mut().assign(name, Value::Class(class).into())?;
+                env.assign(name, Value::Class(class).into())?;
             }
             Stmt::Expression(expr) => {
-                expr.interpret(global, env, binding)?;
+                expr.interpret(env)?;
             }
             Stmt::Function(stmt) => {
                 let function = Function {
                     declaration: Rc::clone(stmt),
-                    closure: Rc::clone(&env),
+                    closure: env.capture(),
                     initializer: false,
                 };
-                env.borrow_mut().define(
+                env.define(
                     Rc::clone(&stmt.name.lexeme),
                     Rc::new(RefCell::new(Value::Function(function))),
                 );
@@ -205,49 +191,38 @@ impl Interpret<()> for Stmt {
                 then_branch,
                 else_branch,
             } => {
-                if is_truthy(
-                    &condition
-                        .interpret(Rc::clone(&global), Rc::clone(&env), binding)?
-                        .borrow(),
-                ) {
-                    then_branch.interpret(global, env, binding)?
+                if is_truthy(&condition.interpret(env)?.borrow()) {
+                    then_branch.interpret(env)?
                 } else if let Some(else_branch) = else_branch {
-                    else_branch.interpret(global, env, binding)?
+                    else_branch.interpret(env)?
                 }
             }
             Stmt::Print(expr) => {
-                let value = expr.interpret(global, env, binding)?;
+                let value = expr.interpret(env)?;
                 println!("{}", value.borrow());
             }
-            Stmt::Return { keyword, value } => {
+            Stmt::Return { value, .. } => {
                 let value = if let Some(expr) = value {
-                    expr.interpret(global, env, binding)?
+                    expr.interpret(env)?
                 } else {
                     Value::Nil.into()
                 };
 
-                return Err(InterpretError::Return {
-                    value,
-                    token: Rc::clone(keyword),
-                });
+                return Err(InterpretError::Return(value));
             }
             Stmt::While { condition, body } => {
-                while is_truthy(
-                    &condition
-                        .interpret(Rc::clone(&global), Rc::clone(&env), binding)?
-                        .borrow(),
-                ) {
-                    body.interpret(Rc::clone(&global), Rc::clone(&env), binding)?;
+                while is_truthy(&condition.interpret(env)?.borrow()) {
+                    body.interpret(env)?;
                 }
             }
             Stmt::Var { name, initializer } => {
                 let value = if let Some(initializer) = initializer {
-                    initializer.interpret(global, Rc::clone(&env), binding)?
+                    initializer.interpret(env)?
                 } else {
                     Value::Nil.into()
                 };
 
-                env.borrow_mut().define(Rc::clone(&name.lexeme), value)
+                env.define(Rc::clone(&name.lexeme), value)
             }
         }
         Ok(())
@@ -255,35 +230,11 @@ impl Interpret<()> for Stmt {
 }
 
 impl Interpret<Rc<RefCell<Value>>> for Expr {
-    fn interpret(
-        &self,
-        global: Rc<RefCell<Environment>>,
-        env: Rc<RefCell<Environment>>,
-        binding: &Binding,
-    ) -> Result<Rc<RefCell<Value>>, InterpretError> {
-        fn look_up_variable(
-            global: &Environment,
-            env: &Environment,
-            binding: &Binding,
-            name: &Rc<Token>,
-            id: usize,
-        ) -> Result<Rc<RefCell<Value>>, InterpretError> {
-            let distance = binding.resolve(id);
-            if let Some(distance) = distance {
-                Ok(env.get_at(distance, &name.lexeme))
-            } else {
-                global.get(name)
-            }
-        }
+    fn interpret(&self, env: &mut Environment) -> Result<Rc<RefCell<Value>>, InterpretError> {
         let expr: Rc<RefCell<Value>> = match self {
             Expr::Assign(AssignExpr { id, name, value }) => {
-                let value = value.interpret(Rc::clone(&env), Rc::clone(&env), binding)?;
-                if let Some(distance) = binding.resolve(*id) {
-                    env.borrow_mut()
-                        .assign_at(distance, name, Rc::clone(&value))?;
-                } else {
-                    global.borrow_mut().assign(name, Rc::clone(&value))?;
-                }
+                let value = value.interpret(env)?;
+                env.assign_by_id(*id, name, Rc::clone(&value))?;
                 value
             }
             Expr::Binary {
@@ -291,8 +242,8 @@ impl Interpret<Rc<RefCell<Value>>> for Expr {
                 operator,
                 right,
             } => {
-                let left = left.interpret(Rc::clone(&global), Rc::clone(&env), binding)?;
-                let right = right.interpret(global, env, binding)?;
+                let left = left.interpret(env)?;
+                let right = right.interpret(env)?;
 
                 match operator.kind {
                     TokenKind::Minus => match (&*left.borrow(), &*right.borrow()) {
@@ -372,11 +323,11 @@ impl Interpret<Rc<RefCell<Value>>> for Expr {
                 paren,
                 arguments,
             } => {
-                let callee = callee.interpret(Rc::clone(&global), Rc::clone(&env), binding)?;
+                let callee = callee.interpret(env)?;
 
                 let mut args = vec![];
                 for argument in arguments {
-                    args.push(argument.interpret(Rc::clone(&global), Rc::clone(&env), binding)?);
+                    args.push(argument.interpret(env)?);
                 }
 
                 let call = |callable: &dyn Callable| -> Result<Rc<RefCell<Value>>, InterpretError> {
@@ -391,14 +342,13 @@ impl Interpret<Rc<RefCell<Value>>> for Expr {
                         }
                         .into());
                     }
-                    match callable.call(global, env, binding, args) {
+                    match callable.call(env, args) {
                         Ok(value) => Ok(value),
-                        Err(InterpretError::Return { value, .. }) => Ok(value),
+                        Err(InterpretError::Return(value)) => Ok(value),
                         err => err,
                     }
                 };
 
-                // TODO: can I inline this?
                 return match &*callee.borrow() {
                     Value::NativeFn(func) => call(func),
                     Value::Function(func) => call(func),
@@ -411,28 +361,24 @@ impl Interpret<Rc<RefCell<Value>>> for Expr {
                 };
             }
             Expr::Get { object, name } => {
-                let value = object.interpret(global, env, binding)?;
-                // TODO: can I inline this?
-                let result = match &*value.borrow() {
-                    Value::ClassInstance(instance) => instance.borrow().get(name)?,
-                    _ => {
-                        return Err(RuntimeError {
-                            token: Rc::clone(name),
-                            message: "Only instances have properties.".to_string(),
-                        }
-                        .into())
+                let value = object.interpret(env)?;
+                return match &*value.borrow() {
+                    Value::ClassInstance(instance) => instance.borrow().get(name),
+                    _ => Err(RuntimeError {
+                        token: Rc::clone(name),
+                        message: "Only instances have properties.".to_string(),
                     }
+                    .into()),
                 };
-                result
             }
-            Expr::Grouping(expr) => expr.interpret(global, env, binding)?,
+            Expr::Grouping(expr) => expr.interpret(env)?,
             Expr::Literal(literal) => Value::from(literal).into(),
             Expr::Logical {
                 left,
                 operator,
                 right,
             } => {
-                let left = left.interpret(Rc::clone(&global), Rc::clone(&env), binding)?;
+                let left = left.interpret(env)?;
                 if let TokenKind::Or = operator.kind {
                     if is_truthy(&left.borrow()) {
                         return Ok(left);
@@ -442,18 +388,18 @@ impl Interpret<Rc<RefCell<Value>>> for Expr {
                         return Ok(left);
                     }
                 }
-                right.interpret(global, env, binding)?
+                right.interpret(env)?
             }
             Expr::Set {
                 object,
                 name,
                 value,
             } => {
-                let object = object.interpret(Rc::clone(&global), Rc::clone(&env), binding)?;
+                let object = object.interpret(env)?;
                 let borrowed_object: &Value = &object.borrow();
 
                 if let Value::ClassInstance(instance) = borrowed_object {
-                    let value = value.interpret(global, env, binding)?;
+                    let value = value.interpret(env)?;
                     instance.borrow_mut().set(name, value)
                 } else {
                     return Err(RuntimeError {
@@ -468,10 +414,8 @@ impl Interpret<Rc<RefCell<Value>>> for Expr {
                 method: method_name,
                 ..
             }) => {
-                let distance = binding.resolve(*id)
-                    .expect("validation of correct 'super' usage to happen in the resolver.");
-                let superclass = env.borrow().get_at(distance, &"super".to_string());
-                let object = env.borrow().get_at(distance - 1, &"this".to_string());
+                let superclass = env.look_up_keyword(*id, "super");
+                let object = env.look_up_keyword_with_offset(*id, "this", 1);
 
                 let method = match &*superclass.borrow() {
                     Value::Class(class) => class.borrow().find_method(&method_name.lexeme),
@@ -493,11 +437,9 @@ impl Interpret<Rc<RefCell<Value>>> for Expr {
 
                 Rc::new(RefCell::new(Value::Function(bound_method)))
             }
-            Expr::This(ThisExpr { id, keyword }) => {
-                look_up_variable(&global.borrow(), &env.borrow(), binding, &keyword, *id)?
-            }
+            Expr::This(ThisExpr { id, keyword }) => env.look_up_variable(*id, keyword)?,
             Expr::Unary { operator, right } => {
-                let right = right.interpret(global, env, binding)?;
+                let right = right.interpret(env)?;
 
                 match operator.kind {
                     TokenKind::Bang => Value::Boolean(!is_truthy(&right.borrow())).into(),
@@ -517,9 +459,7 @@ impl Interpret<Rc<RefCell<Value>>> for Expr {
                     }
                 }
             }
-            Expr::Variable(VariableExpr { id, name }) => {
-                look_up_variable(&global.borrow(), &env.borrow(), binding, name, *id)?
-            }
+            Expr::Variable(VariableExpr { id, name }) => env.look_up_variable(*id, name)?,
         };
         Ok(expr)
     }
@@ -530,9 +470,7 @@ pub(crate) trait Callable: Display {
 
     fn call(
         &self,
-        global: Rc<RefCell<Environment>>,
-        env: Rc<RefCell<Environment>>,
-        binding: &Binding,
+        env: &mut Environment,
         arguments: Vec<Rc<RefCell<Value>>>,
     ) -> Result<Rc<RefCell<Value>>, InterpretError>;
 }
@@ -544,12 +482,10 @@ impl<T: Callable> Callable for Rc<T> {
 
     fn call(
         &self,
-        global: Rc<RefCell<Environment>>,
-        env: Rc<RefCell<Environment>>,
-        binding: &Binding,
+        env: &mut Environment,
         arguments: Vec<Rc<RefCell<Value>>>,
     ) -> Result<Rc<RefCell<Value>>, InterpretError> {
-        <T as Callable>::call(self, global, env, binding, arguments)
+        <T as Callable>::call(self, env, arguments)
     }
 }
 
@@ -557,7 +493,7 @@ pub(crate) struct NativeFn {
     arity: usize,
     function: Box<
         dyn Fn(
-            Rc<RefCell<Environment>>,
+            &mut Environment,
             Vec<Rc<RefCell<Value>>>,
         ) -> Result<Rc<RefCell<Value>>, InterpretError>,
     >,
@@ -576,29 +512,32 @@ impl Callable for NativeFn {
 
     fn call(
         &self,
-        _: Rc<RefCell<Environment>>,
-        global: Rc<RefCell<Environment>>,
-        _: &Binding,
+        env: &mut Environment,
         arguments: Vec<Rc<RefCell<Value>>>,
     ) -> Result<Rc<RefCell<Value>>, InterpretError> {
-        let env = Rc::new(RefCell::new(Environment::child(global)));
-        (self.function)(env, arguments)
+        let handle = env.native();
+        let result = (self.function)(env, arguments);
+        handle.restore_env(env);
+        result
     }
 }
 
 pub(crate) struct Function {
     declaration: Rc<FunctionStmt>,
-    closure: Rc<RefCell<Environment>>,
+    closure: Option<Rc<RefCell<LocalEnvironment>>>,
     initializer: bool,
 }
 
 impl Function {
     fn bind(&self, instance: Rc<RefCell<ClassInstance>>) -> Function {
-        let mut env = Environment::child(Rc::clone(&self.closure));
-        env.define(Rc::new("this".to_string()), Value::ClassInstance(instance).into());
+        let mut env = LocalEnvironment::new(self.closure.as_ref().map(Rc::clone));
+        env.define(
+            Rc::new("this".to_string()),
+            Value::ClassInstance(instance).into(),
+        );
         Function {
             declaration: Rc::clone(&self.declaration),
-            closure: Rc::new(RefCell::new(env)),
+            closure: Some(Rc::new(RefCell::new(env))),
             initializer: self.initializer,
         }
     }
@@ -617,36 +556,53 @@ impl Callable for Function {
 
     fn call(
         &self,
-        global: Rc<RefCell<Environment>>,
-        _: Rc<RefCell<Environment>>,
-        binding: &Binding,
+        env: &mut Environment,
         arguments: Vec<Rc<RefCell<Value>>>,
     ) -> Result<Rc<RefCell<Value>>, InterpretError> {
-        let env = Rc::new(RefCell::new(Environment::child(Rc::clone(&self.closure))));
+        let handle = env.closure(self.closure.as_ref().map(Rc::clone));
+
         for i in 0..self.declaration.params.len() {
             let name = &self.declaration.params[i].lexeme;
             let value = Rc::clone(&arguments[i]);
-            env.borrow_mut().define(Rc::clone(name), value);
+            env.define(Rc::clone(name), value);
         }
 
         for statement in self.declaration.body.iter() {
-            let result = statement.interpret(Rc::clone(&global), Rc::clone(&env), binding);
-            // TODO: can it be less ugly?
-            if let Err(e) = result {
-                return if let InterpretError::Return { value, .. } = e {
-                    if self.initializer {
-                        Ok(self.closure.borrow().get_at(0, &"this".to_string()))
-                    } else {
-                        Ok(value)
-                    }
+            let result = statement.interpret(env);
+
+            let error = match result {
+                Ok(_) => continue,
+                Err(e) => e,
+            };
+            // we've got an error, so we can discard current environment
+            handle.restore_env(env);
+            return if let InterpretError::Return(value) = error {
+                // only method can be an initializer,
+                // so we should always be able to get 'this'
+                let value = if self.initializer {
+                    self.closure
+                        .as_ref()
+                        .unwrap()
+                        .borrow()
+                        .get_at(0, &"this".to_string())
                 } else {
-                    Err(e)
+                    value
                 };
+                Ok(value)
+            } else {
+                Err(error)
             };
         }
 
+        handle.restore_env(env);
+
         if self.initializer {
-            return Ok(self.closure.borrow().get_at(0, &"this".to_string()));
+            return Ok(self
+                .closure
+                .as_ref()
+                .unwrap()
+                .borrow()
+                .get_at(0, &"this".to_string()));
         }
 
         // only 'return' statement can return values
@@ -715,16 +671,14 @@ impl Callable for Class {
 
     fn call(
         &self,
-        global: Rc<RefCell<Environment>>,
-        env: Rc<RefCell<Environment>>,
-        binding: &Binding,
+        env: &mut Environment,
         arguments: Vec<Rc<RefCell<Value>>>,
     ) -> Result<Rc<RefCell<Value>>, InterpretError> {
         let instance = ClassInstance::new(self.this());
         if let Some(initializer) = self.find_method(&Rc::new("init".to_string())) {
             initializer
                 .bind(Rc::clone(&instance))
-                .call(global, env, binding, arguments)?;
+                .call(env, arguments)?;
         }
         Ok(Value::ClassInstance(instance).into())
     }
@@ -757,7 +711,6 @@ impl ClassInstance {
             return Ok(Rc::clone(value));
         }
 
-        // TODO: delegate method lookup to class?
         if let Some(method) = self.class.borrow().find_method(&name.lexeme) {
             let method = method.bind(self.this());
             return Ok(Value::Function(method).into());
