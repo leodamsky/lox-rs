@@ -66,14 +66,14 @@ impl Resolve for Stmt {
                     ctx.scopes
                         .last_mut()
                         .unwrap()
-                        .insert("super".to_string().into(), true);
+                        .insert_variable("super".to_string().into(), true);
                 }
 
                 ctx.begin_scope();
                 ctx.scopes
                     .last_mut()
                     .unwrap()
-                    .insert("this".to_string().into(), true);
+                    .insert_variable("this".to_string().into(), true);
 
                 for method in methods {
                     let mut declaration = FunctionType::Method;
@@ -148,10 +148,12 @@ impl Resolve for Expr {
     fn resolve(&self, ctx: &mut Context) {
         fn resolve_local(ctx: &mut Context, expr_id: usize, name: &Token) {
             for i in (0..ctx.scopes.len()).rev() {
-                if ctx.scopes[i].contains_key(&name.lexeme) {
-                    ctx.binding
-                        .borrow_mut()
-                        .bind(expr_id, ctx.scopes.len() - 1 - i);
+                if let Some(variable) = ctx.scopes[i].variables.get(&name.lexeme) {
+                    ctx.binder.borrow_mut().bind(
+                        expr_id,
+                        ctx.scopes.len() - 1 - i,
+                        variable.index,
+                    );
                     return;
                 }
             }
@@ -200,8 +202,12 @@ impl Resolve for Expr {
                 right.resolve(ctx);
             }
             Expr::Variable(VariableExpr { id, name }) => {
-                if let Some(initialized) = ctx.scopes.last().and_then(|s| s.get(&name.lexeme)) {
-                    if !initialized {
+                if let Some(variable) = ctx
+                    .scopes
+                    .last()
+                    .and_then(|s| s.variables.get(&name.lexeme))
+                {
+                    if !variable.defined {
                         ctx.lox.syntax_error(
                             name,
                             "Can't read local variable in its own initializer.",
@@ -233,18 +239,18 @@ impl Resolve for Expr {
 
 pub(crate) struct Context<'a> {
     lox: &'a mut Lox,
-    binding: Rc<RefCell<Binding>>,
-    scopes: Vec<HashMap<Rc<String>, bool>>,
+    binder: Rc<RefCell<Binder>>,
+    scopes: Vec<Scope>,
     cur_function: FunctionType,
     cur_class: ClassType,
 }
 
 impl<'a> Context<'a> {
     pub(crate) fn new(lox: &mut Lox) -> Context {
-        let binding = Rc::clone(&lox.binding);
+        let binder = Rc::clone(&lox.binder);
         Context {
             lox,
-            binding,
+            binder,
             scopes: vec![],
             cur_function: FunctionType::default(),
             cur_class: ClassType::default(),
@@ -252,29 +258,50 @@ impl<'a> Context<'a> {
     }
 
     fn begin_scope(&mut self) {
-        self.scopes.push(HashMap::new());
+        self.scopes.push(Scope::default());
     }
 
     fn declare(&mut self, name: &Token) {
         if let Some(scope) = self.scopes.last_mut() {
-            if scope.contains_key(&name.lexeme) {
+            if scope.variables.contains_key(&name.lexeme) {
                 self.lox
                     .syntax_error(name, "Already a variable with this name in this scope.");
             }
 
-            scope.insert(Rc::clone(&name.lexeme), false);
+            scope.insert_variable(Rc::clone(&name.lexeme), false);
         }
     }
 
     fn define(&mut self, name: &Token) {
         if let Some(scope) = self.scopes.last_mut() {
-            scope.insert(Rc::clone(&name.lexeme), true);
+            let variable = scope.variables.get_mut(&name.lexeme).unwrap();
+            variable.defined = true;
         }
     }
 
     fn end_scope(&mut self) {
         self.scopes.pop();
     }
+}
+
+#[derive(Default)]
+struct Scope {
+    next_index: usize,
+    variables: HashMap<Rc<String>, Variable>,
+}
+
+impl Scope {
+    fn insert_variable(&mut self, name: Rc<String>, defined: bool) {
+        let index = self.next_index;
+        self.next_index += 1;
+        let variable = Variable { defined, index };
+        self.variables.insert(name, variable);
+    }
+}
+
+struct Variable {
+    defined: bool,
+    index: usize,
 }
 
 #[derive(Copy, Clone)]
@@ -304,17 +331,24 @@ impl Default for ClassType {
     }
 }
 
-#[derive(Default)]
 pub(crate) struct Binding {
-    locals: HashMap<usize, usize>,
+    /// Number of scopes that we need to just through to get the variable.
+    pub(crate) hops: usize,
+    /// Positional index of the variable in a single scope.
+    pub(crate) index: usize,
 }
 
-impl Binding {
-    pub(crate) fn resolve(&self, id: usize) -> Option<usize> {
-        self.locals.get(&id).copied()
+#[derive(Default)]
+pub(crate) struct Binder {
+    locals: HashMap<usize, Binding>,
+}
+
+impl Binder {
+    pub(crate) fn resolve(&self, id: usize) -> Option<&Binding> {
+        self.locals.get(&id)
     }
 
-    fn bind(&mut self, id: usize, hops: usize) {
-        self.locals.insert(id, hops);
+    fn bind(&mut self, id: usize, hops: usize, index: usize) {
+        self.locals.insert(id, Binding { hops, index });
     }
 }

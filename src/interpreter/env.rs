@@ -1,5 +1,5 @@
 use crate::interpreter::{NativeFn, RuntimeError, SharedValue, Value};
-use crate::{Binding, Token};
+use crate::{Binder, Token};
 use std::cell::RefCell;
 use std::collections::HashMap;
 use std::mem;
@@ -11,7 +11,7 @@ pub(crate) struct Environment {
     // local env is used for child scopes,
     // so we need to share a reference to it
     local: Option<Rc<RefCell<LocalEnvironment>>>,
-    binding: Rc<RefCell<Binding>>,
+    binder: Rc<RefCell<Binder>>,
 }
 
 /// Closure that restores enclosing environment.
@@ -40,11 +40,11 @@ impl Drop for Handle {
 }
 
 impl Environment {
-    pub(super) fn new(binding: Rc<RefCell<Binding>>) -> Environment {
+    pub(super) fn new(binder: Rc<RefCell<Binder>>) -> Environment {
         Environment {
             global: GlobalEnvironment::new(),
             local: None,
-            binding,
+            binder,
         }
     }
 
@@ -84,11 +84,12 @@ impl Environment {
         self.local.as_ref().map(Rc::clone)
     }
 
-    pub(super) fn define(&mut self, name: Rc<String>, value: SharedValue) {
+    pub(super) fn define(&mut self, name: Rc<String>, value: SharedValue) -> Option<usize> {
         if let Some(local_env) = &self.local {
-            local_env.borrow_mut().define(name, value);
+            Some(local_env.borrow_mut().define(value))
         } else {
             self.global.define(name, value);
+            None
         }
     }
 
@@ -98,12 +99,13 @@ impl Environment {
         name: &Rc<Token>,
         value: SharedValue,
     ) -> Result<(), RuntimeError> {
-        if let Some(distance) = self.binding.borrow().resolve(id) {
+        if let Some(binding) = self.binder.borrow().resolve(id) {
             self.local
                 .as_ref()
                 .expect("local env to be present given binding")
                 .borrow_mut()
-                .assign_at(distance, name, value)
+                .assign_at(binding.hops, binding.index, value);
+            Ok(())
         } else {
             // though, we have ID, this variable is stored in the global env,
             // so we don't need it
@@ -111,21 +113,23 @@ impl Environment {
         }
     }
 
-    pub(super) fn assign(
+    pub(super) fn assign_last(
         &mut self,
+        index: Option<usize>,
         name: &Rc<Token>,
         value: SharedValue,
     ) -> Result<(), RuntimeError> {
-        if let Some(local_env) = &self.local {
-            if local_env
+        // if we have index, than we declared variable to the local environment
+        if let Some(index) = index {
+            self.local
+                .as_ref()
+                .unwrap()
                 .borrow_mut()
-                .try_assign(name, Rc::clone(&value))
-                .is_some()
-            {
-                return Ok(());
-            }
+                .assign_at(0, index, value);
+            Ok(())
+        } else {
+            self.global.assign(name, value)
         }
-        self.global.assign(name, value)
     }
 
     pub(super) fn look_up_variable(
@@ -133,13 +137,13 @@ impl Environment {
         id: usize,
         name: &Rc<Token>,
     ) -> Result<SharedValue, RuntimeError> {
-        if let Some(distance) = self.binding.borrow().resolve(id) {
+        if let Some(binding) = self.binder.borrow().resolve(id) {
             Ok(self
                 .local
                 .as_ref()
                 .expect("local env to be present given binding")
                 .borrow()
-                .get_at(distance, &name.lexeme))
+                .get_at(binding.hops, binding.index))
         } else {
             self.global.get(name)
         }
@@ -155,16 +159,15 @@ impl Environment {
         name: &str,
         offset: usize,
     ) -> SharedValue {
-        let distance = self
-            .binding
-            .borrow()
+        let binder = self.binder.borrow();
+        let binding = binder
             .resolve(id)
             .unwrap_or_else(|| panic!("Interpreter hasn't defined '{}' keyword.", name));
         self.local
             .as_ref()
             .expect("local env to be present given binding")
             .borrow()
-            .get_at(distance - offset, &name.to_string())
+            .get_at(binding.hops - offset, binding.index)
     }
 }
 
@@ -227,13 +230,13 @@ impl GlobalEnvironment {
 
 pub(crate) struct LocalEnvironment {
     enclosing: Option<Rc<RefCell<LocalEnvironment>>>,
-    values: HashMap<Rc<String>, SharedValue>,
+    values: Vec<SharedValue>,
 }
 
 impl LocalEnvironment {
     pub(super) fn new(enclosing: Option<Rc<RefCell<LocalEnvironment>>>) -> LocalEnvironment {
         LocalEnvironment {
-            values: HashMap::new(),
+            values: Vec::new(),
             enclosing,
         }
     }
@@ -250,56 +253,26 @@ impl LocalEnvironment {
         Some(environment)
     }
 
-    pub(super) fn define(&mut self, name: Rc<String>, value: SharedValue) {
-        self.values.insert(name, value);
+    pub(super) fn define(&mut self, value: SharedValue) -> usize {
+        self.values.push(value);
+        self.values.len() - 1
     }
 
     /// Returns pre-indexed (in Resolver) variable based on [distance].
     /// Panics if variable doesn't exist. This indicates that Resolver works incorrectly.
-    pub(super) fn get_at(&self, distance: usize, name: &String) -> Rc<RefCell<Value>> {
-        let value = if let Some(env) = self.ancestor(distance) {
-            env.borrow().values.get(name).map(Rc::clone)
-        } else {
-            self.values.get(name).map(Rc::clone)
-        };
-        value.unwrap()
-    }
-
-    fn assign_at(
-        &mut self,
-        distance: usize,
-        name: &Rc<Token>,
-        value: SharedValue,
-    ) -> Result<(), RuntimeError> {
+    pub(super) fn get_at(&self, distance: usize, index: usize) -> Rc<RefCell<Value>> {
         if let Some(env) = self.ancestor(distance) {
-            env.borrow_mut().assign(name, value)
+            Rc::clone(&env.borrow().values[index])
         } else {
-            self.assign(name, value)
+            Rc::clone(&self.values[index])
         }
     }
 
-    fn assign(&mut self, name: &Rc<Token>, value: SharedValue) -> Result<(), RuntimeError> {
-        if let Some(cur_value) = self.values.get_mut(&name.lexeme) {
-            *cur_value = value;
-            return Ok(());
+    fn assign_at(&mut self, distance: usize, index: usize, value: SharedValue) {
+        if let Some(env) = self.ancestor(distance) {
+            env.borrow_mut().values[index] = value;
+        } else {
+            self.values[index] = value;
         }
-        if let Some(enclosing) = &self.enclosing {
-            return enclosing.borrow_mut().assign(name, value);
-        }
-        Err(RuntimeError {
-            message: format!("Undefined variable '{}'.", name.lexeme),
-            token: Rc::clone(name),
-        })
-    }
-
-    fn try_assign(&mut self, name: &Rc<Token>, value: SharedValue) -> Option<()> {
-        if let Some(cur_value) = self.values.get_mut(&name.lexeme) {
-            *cur_value = value;
-            return Some(());
-        }
-        if let Some(enclosing) = &self.enclosing {
-            return enclosing.borrow_mut().try_assign(name, value);
-        }
-        None
     }
 }

@@ -5,7 +5,7 @@ use std::rc::Rc;
 
 use crate::interpreter::{InterpretError, Interpreter};
 use crate::parser::Parser;
-use crate::resolver::{Binding, Resolve};
+use crate::resolver::{Binder, Resolve};
 use crate::scanner::Scanner;
 
 mod id;
@@ -19,17 +19,17 @@ pub struct Lox {
     had_error: bool,
     had_runtime_error: bool,
     interpreter: Interpreter,
-    binding: Rc<RefCell<Binding>>,
+    binder: Rc<RefCell<Binder>>,
 }
 
 impl Lox {
     pub fn new() -> Lox {
-        let binding = Rc::new(RefCell::new(Binding::default()));
+        let binder = Rc::new(RefCell::new(Binder::default()));
         Lox {
             had_error: false,
             had_runtime_error: false,
-            interpreter: Interpreter::new(Rc::clone(&binding)),
-            binding,
+            interpreter: Interpreter::new(Rc::clone(&binder)),
+            binder,
         }
     }
 

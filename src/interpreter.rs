@@ -7,7 +7,7 @@ use std::rc::Rc;
 mod env;
 
 use crate::interpreter::env::{Environment, LocalEnvironment};
-use crate::resolver::Binding;
+use crate::resolver::Binder;
 use crate::{
     AssignExpr, Expr, FunctionStmt, Literal, Stmt, SuperExpr, ThisExpr, Token, TokenKind,
     VariableExpr,
@@ -87,9 +87,9 @@ pub(crate) struct Interpreter {
 }
 
 impl Interpreter {
-    pub(crate) fn new(binding: Rc<RefCell<Binding>>) -> Interpreter {
+    pub(crate) fn new(binder: Rc<RefCell<Binder>>) -> Interpreter {
         Interpreter {
-            environment: Environment::new(binding),
+            environment: Environment::new(binder),
         }
     }
 
@@ -137,7 +137,7 @@ impl Interpret<()> for Stmt {
                     None
                 };
 
-                env.define(Rc::clone(&name.lexeme), Value::Nil.into());
+                let index = env.define(Rc::clone(&name.lexeme), Value::Nil.into());
 
                 let handle = if let Some(superclass) = &superclass {
                     let handle = env.child();
@@ -164,7 +164,7 @@ impl Interpret<()> for Stmt {
                 }
 
                 let class = Class::new(Rc::clone(&name.lexeme), superclass, functions);
-                env.assign(name, Value::Class(class).into())?;
+                env.assign_last(index, name, Value::Class(class).into())?;
             }
             Stmt::Expression(expr) => {
                 expr.interpret(env)?;
@@ -216,7 +216,7 @@ impl Interpret<()> for Stmt {
                     Value::Nil.into()
                 };
 
-                env.define(Rc::clone(&name.lexeme), value)
+                env.define(Rc::clone(&name.lexeme), value);
             }
         }
         Ok(())
@@ -520,10 +520,7 @@ pub(crate) struct Function {
 impl Function {
     fn bind(&self, instance: Rc<RefCell<ClassInstance>>) -> Function {
         let mut env = LocalEnvironment::new(self.closure.as_ref().map(Rc::clone));
-        env.define(
-            Rc::new("this".to_string()),
-            Value::ClassInstance(instance).into(),
-        );
+        env.define(Value::ClassInstance(instance).into());
         Function {
             declaration: Rc::clone(&self.declaration),
             closure: Some(Rc::new(RefCell::new(env))),
@@ -568,11 +565,7 @@ impl Callable for Function {
                 // only method can be an initializer,
                 // so we should always be able to get 'this'
                 let value = if self.initializer {
-                    self.closure
-                        .as_ref()
-                        .unwrap()
-                        .borrow()
-                        .get_at(0, &"this".to_string())
+                    self.closure.as_ref().unwrap().borrow().get_at(0, 0)
                 } else {
                     value
                 };
@@ -590,7 +583,7 @@ impl Callable for Function {
                 .as_ref()
                 .unwrap()
                 .borrow()
-                .get_at(0, &"this".to_string()));
+                .get_at(0, 0));
         }
 
         // only 'return' statement can return values

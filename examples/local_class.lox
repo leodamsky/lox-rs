@@ -1,0 +1,6 @@
+fun enclosing() {
+    class Doughnut {}
+    print Doughnut;
+}
+
+enclosing();
